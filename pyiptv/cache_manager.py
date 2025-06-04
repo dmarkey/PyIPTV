@@ -34,7 +34,7 @@ class M3UCacheManager:
         # Use system temp directory with application-specific subfolder
         import tempfile
 
-        return os.path.join(tempfile.gettempdir(), "pyptv_cache")
+        return os.path.join(tempfile.gettempdir(), "pyiptv_cache")
 
     def _ensure_cache_dir_exists(self):
         """Ensure the cache directory exists."""

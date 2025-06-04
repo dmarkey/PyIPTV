@@ -22,18 +22,18 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QIcon, QKeySequence, QAction, QShortcut
 from PySide6.QtCore import Qt, QTimer
-from pyptv.ui.themes import ThemeManager
-from pyptv.ui.playlist_manager_window import PlaylistManagerWindow
+from pyiptv.ui.themes import ThemeManager
+from pyiptv.ui.playlist_manager_window import PlaylistManagerWindow
 
-from pyptv.qmedia_player import QMediaVideoPlayer
-from pyptv.settings_manager import SettingsManager
-from pyptv.playlist_manager import PlaylistManager
-from pyptv.ui.components.virtualized_channel_list import VirtualizedChannelList
-from pyptv.ui.components.video_placeholder import VideoPlaceholder
-from pyptv.ui.components.enhanced_controls import EnhancedControlBar
-from pyptv.ui.components.unified_status_system import UnifiedStatusBar, StatusManager
-from pyptv.ui.components.simplified_operations import SimplifiedOperationManager
-from pyptv.ui.themes import ModernDarkTheme
+from pyiptv.qmedia_player import QMediaVideoPlayer
+from pyiptv.settings_manager import SettingsManager
+from pyiptv.playlist_manager import PlaylistManager
+from pyiptv.ui.components.virtualized_channel_list import VirtualizedChannelList
+from pyiptv.ui.components.video_placeholder import VideoPlaceholder
+from pyiptv.ui.components.enhanced_controls import EnhancedControlBar
+from pyiptv.ui.components.unified_status_system import UnifiedStatusBar, StatusManager
+from pyiptv.ui.components.simplified_operations import SimplifiedOperationManager
+from pyiptv.ui.themes import ModernDarkTheme
 from PySide6.QtMultimediaWidgets import QVideoWidget
 import os
 from pathlib import Path
@@ -174,7 +174,7 @@ class SettingsDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self, playlist_path=None):
         super().__init__()
-        self.setWindowTitle("PyPTV")
+        self.setWindowTitle("PyIPTV")
         self.settings_manager = SettingsManager()
         self.playlist_manager = PlaylistManager(self.settings_manager)
         self.all_channels_data = []
@@ -1121,7 +1121,7 @@ class MainWindow(QMainWindow):
 
 if __name__ == "__main__":
     # This is for testing the UI standalone.
-    # In the actual application, pyptv.main will run this.
+    # In the actual application, pyiptv.main will run this.
 
     app = QApplication(sys.argv)
 

@@ -28,7 +28,7 @@ class SettingsManager:
         "enable_channel_icons": False,  # Disable icons for large files by default
     }
 
-    def __init__(self, settings_filename="pyptv_settings.json"):
+    def __init__(self, settings_filename="pyiptv_settings.json"):
         """
         Initializes the SettingsManager.
 
@@ -50,14 +50,14 @@ class SettingsManager:
             if not app_data_dir:
                 # Fallback if APPDATA is not set (unlikely for modern Windows)
                 app_data_dir = os.path.expanduser("~")
-            config_dir = os.path.join(app_data_dir, "PyPTV")
+            config_dir = os.path.join(app_data_dir, "PyIPTV")
         else:  # Linux, macOS
             xdg_config_home = os.getenv("XDG_CONFIG_HOME")
             if xdg_config_home:
-                config_dir = os.path.join(xdg_config_home, "PyPTV")
+                config_dir = os.path.join(xdg_config_home, "PyIPTV")
             else:
-                # Fallback to ~/.config/PyPTV
-                config_dir = os.path.join(os.path.expanduser("~"), ".config", "PyPTV")
+                # Fallback to ~/.config/PyIPTV
+                config_dir = os.path.join(os.path.expanduser("~"), ".config", "PyIPTV")
 
         if not os.path.exists(config_dir):
             try:
@@ -223,7 +223,7 @@ if __name__ == "__main__":
             # Also remove the directory if it was created by this test and is empty
             config_dir = os.path.dirname(manager.settings_filepath)
             if (
-                "PyPTV" in config_dir
+                "PyIPTV" in config_dir
                 and os.path.exists(config_dir)
                 and not os.listdir(config_dir)
             ):

@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QRadioButton,
     QButtonGroup,
-    QCheckBox,
     QInputDialog,
     QStyle,
 )
@@ -35,9 +34,9 @@ from PySide6.QtCore import QRect, QByteArray
 from PySide6.QtGui import QIcon
 from urllib.parse import urlparse
 
-from pyptv.playlist_manager import PlaylistManager, PlaylistEntry
-from pyptv.settings_manager import SettingsManager
-from pyptv.ui.url_download_worker import URLDownloadWorker
+from pyiptv.playlist_manager import PlaylistManager, PlaylistEntry
+from pyiptv.settings_manager import SettingsManager
+from pyiptv.ui.url_download_worker import URLDownloadWorker
 
 
 class PlaylistListItemDelegate(QStyledItemDelegate):
@@ -181,8 +180,8 @@ class AddPlaylistDialog(QDialog):
         name_layout = QFormLayout(name_group)
 
         self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("Enter playlist name...")
-        name_layout.addRow("Name:", self.name_input)
+        self.name_input.setPlaceholderText("Enter playlist name (required)")
+        name_layout.addRow("Name*:", self.name_input)
 
         layout.addWidget(name_group)
 
@@ -249,12 +248,6 @@ class AddPlaylistDialog(QDialog):
 
         layout.addWidget(input_group)
 
-        # Auto-naming option
-        self.auto_name_check = QCheckBox("Auto-generate name from source")
-        self.auto_name_check.setChecked(True)
-        self.auto_name_check.toggled.connect(self.auto_name_toggled)
-        layout.addWidget(self.auto_name_check)
-
         # Buttons
         button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -269,15 +262,12 @@ class AddPlaylistDialog(QDialog):
 
         # Connect signals
         self.source_type_group.buttonToggled.connect(self.source_type_changed)
-        self.file_input.textChanged.connect(self.update_auto_name)
-        self.url_input.textChanged.connect(self.update_auto_name)
 
     def source_type_changed(self):
         """Handle source type radio button changes."""
         is_file = self.file_radio.isChecked()
         self.file_widget.setVisible(is_file)
         self.url_widget.setVisible(not is_file)
-        self.update_auto_name()
 
     def browse_file(self):
         """Open file browser for M3U files."""
@@ -313,40 +303,6 @@ class AddPlaylistDialog(QDialog):
             QMessageBox.critical(
                 self, "URL Test Failed", f"Cannot access URL:\n{str(e)}"
             )
-
-    def auto_name_toggled(self, checked):
-        """Handle auto-name checkbox toggle."""
-        self.name_input.setEnabled(not checked)
-        if checked:
-            self.update_auto_name()
-        else:
-            self.name_input.clear()
-
-    def update_auto_name(self):
-        """Auto-generate playlist name from source."""
-        if not self.auto_name_check.isChecked():
-            return
-
-        if self.file_radio.isChecked():
-            file_path = self.file_input.text().strip()
-            if file_path:
-                name = os.path.splitext(os.path.basename(file_path))[0]
-                self.name_input.setText(name)
-        else:
-            url = self.url_input.text().strip()
-            if url:
-                try:
-
-                    parsed = urlparse(url)
-                    if parsed.path:
-                        name = os.path.splitext(os.path.basename(parsed.path))[0]
-                        if not name:
-                            name = parsed.netloc or "URL Playlist"
-                    else:
-                        name = parsed.netloc or "URL Playlist"
-                    self.name_input.setText(name)
-                except (ValueError, TypeError, AttributeError):
-                    self.name_input.setText("URL Playlist")
 
     def get_playlist_data(self):
         """Get the playlist data from the dialog."""
@@ -471,7 +427,7 @@ class PlaylistManagerWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("PyPTV Playlist Manager")
+        self.setWindowTitle("PyIPTV Playlist Manager")
         self.setMinimumSize(800, 600)
 
         # Set window icon using robust path resolution
@@ -503,7 +459,7 @@ class PlaylistManagerWindow(QMainWindow):
         main_layout.setSpacing(16)
 
         # Header
-        header_label = QLabel("PyPTV Playlist Manager")
+        header_label = QLabel("PyIPTV Playlist Manager")
         header_font = header_label.font()
         header_font.setPointSize(header_font.pointSize() + 6)
         header_font.setWeight(QFont.Weight.Bold)
@@ -868,7 +824,7 @@ class PlaylistManagerWindow(QMainWindow):
         )
 
     def launch_selected_playlist(self):
-        """Launch the PyPTV player with the selected playlist."""
+        """Launch the PyIPTV player with the selected playlist."""
         current_item = self.playlist_list.currentItem()
         if not current_item:
             return
@@ -965,7 +921,7 @@ class PlaylistManagerWindow(QMainWindow):
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Playlists",
-            "pyptv_playlists_export.json",
+            "pyiptv_playlists_export.json",
             "JSON Files (*.json);;All Files (*)",
         )
 

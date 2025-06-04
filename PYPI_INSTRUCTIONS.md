@@ -1,13 +1,13 @@
 # PyPI Publishing Instructions
 
-This document contains instructions for publishing PyPTV to PyPI and verifying uvx compatibility.
+This document contains instructions for publishing PyIPTV to PyPI and verifying uvx compatibility.
 
 ## Package Information
-- **Package Name**: `pyptv`
+- **Package Name**: `pyiptv`
 - **Version**: `1.0.0`
 - **License**: MIT
 - **Author**: David Markey <david@dmarkey.com>
-- **Repository**: https://github.com/dmarkey/Pyptv
+- **Repository**: https://github.com/dmarkey/PyIPTV
 
 ## Files Created for PyPI
 
@@ -21,7 +21,7 @@ This document contains instructions for publishing PyPTV to PyPI and verifying u
 
 ### Package Structure
 ```
-pyptv/
+pyiptv/
 ├── __init__.py          # Package metadata and version info
 ├── main.py             # Main entry point with CLI functionality
 ├── *.py                # All other Python modules
@@ -32,8 +32,8 @@ pyptv/
 ```
 
 ## Built Packages
-- `dist/pyptv-1.0.0-py3-none-any.whl` - Universal wheel
-- `dist/pyptv-1.0.0.tar.gz` - Source distribution
+- `dist/pyiptv-1.0.0-py3-none-any.whl` - Universal wheel
+- `dist/pyiptv-1.0.0.tar.gz` - Source distribution
 
 ## Publishing to PyPI
 
@@ -48,7 +48,7 @@ pip install twine
 twine upload --repository testpypi dist/*
 
 # Test installation from TestPyPI
-pip install --index-url https://test.pypi.org/simple/ pyptv
+pip install --index-url https://test.pypi.org/simple/ pyiptv
 ```
 
 ### 3. Publish to PyPI
@@ -77,30 +77,30 @@ password = your-testpypi-token
 
 ### From PyPI
 ```bash
-pip install pyptv
+pip install pyiptv
 ```
 
 ### Using uvx (Isolated execution)
 ```bash
-uvx pyptv
+uvx pyiptv
 ```
 
 ### From source
 ```bash
-git clone https://github.com/dmarkey/Pyptv.git
-cd Pyptv
+git clone https://github.com/dmarkey/PyIPTV.git
+cd PyIPTV
 pip install -e .
 ```
 
 ## Usage
 
 ### Command Line
-- `pyptv` - Launch with playlist manager
-- `pyptv /path/to/playlist.m3u` - Launch with specific playlist
+- `pyiptv` - Launch with playlist manager
+- `pyiptv /path/to/playlist.m3u` - Launch with specific playlist
 
 ### uvx Usage
-- `uvx pyptv` - Run in isolated environment
-- `uvx --from pyptv pyptv /path/to/playlist.m3u` - Run with playlist
+- `uvx pyiptv` - Run in isolated environment
+- `uvx --from pyiptv pyiptv /path/to/playlist.m3u` - Run with playlist
 
 ## Package Features
 - Modern PySide6/Qt6 interface
@@ -118,12 +118,12 @@ pip install -e .
 
 ## Next Steps
 1. Test the package locally: `pip install -e .`
-2. Verify CLI works: `pyptv`
-3. Test with uvx: `uvx --from . pyptv`
+2. Verify CLI works: `pyiptv`
+3. Test with uvx: `uvx --from . pyiptv`
 4. Upload to TestPyPI for testing
 5. Upload to production PyPI
 6. Test installation from PyPI
-7. Verify uvx works with published package: `uvx pyptv`
+7. Verify uvx works with published package: `uvx pyiptv`
 
 ## Notes
 - The package includes all necessary metadata for PyPI

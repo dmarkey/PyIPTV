@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pyptv"
+name = "pyiptv"
 version = "1.0.0"
 description = "A modern IPTV player built with PySide6"
 readme = "README.md"
@@ -51,19 +51,19 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/dmarkey/Pyptv"
-Repository = "https://github.com/dmarkey/Pyptv"
-Issues = "https://github.com/dmarkey/Pyptv/issues"
-Documentation = "https://github.com/dmarkey/Pyptv#readme"
+Homepage = "https://github.com/dmarkey/PyIPTV"
+Repository = "https://github.com/dmarkey/PyIPTV"
+Issues = "https://github.com/dmarkey/PyIPTV/issues"
+Documentation = "https://github.com/dmarkey/PyIPTV#readme"
 
 [project.scripts]
-pyptv = "pyptv.main:main"
+pyiptv = "pyiptv.main:main"
 
 [tool.setuptools.packages.find]
-include = ["pyptv*"]
+include = ["pyiptv*"]
 
 [tool.setuptools.package-data]
-pyptv = ["ui/images/*.png", "ui/images/*.ico", "ui/images/*.svg"]
+pyiptv = ["ui/images/*.png", "ui/images/*.ico", "ui/images/*.svg"]
 
 [tool.black]
 line-length = 88
@@ -87,7 +87,7 @@ extend-exclude = '''
 profile = "black"
 multi_line_output = 3
 line_length = 88
-known_first_party = ["pyptv"]
+known_first_party = ["pyiptv"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -128,8 +128,8 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# PyPTV specific
-pyptv_settings.json
+# PyIPTV specific
+pyiptv_settings.json
 *.m3u
 *.m3u8
 

@@ -4,9 +4,9 @@ import uuid
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from PySide6.QtCore import QObject, Signal
-from pyptv.m3u_parser import M3UParser
+from pyiptv.m3u_parser import M3UParser
 import requests
-from pyptv.cache_manager import M3UCacheManager
+from pyiptv.cache_manager import M3UCacheManager
 
 
 class PlaylistEntry:
@@ -149,7 +149,7 @@ class PlaylistEntry:
 
 
 class PlaylistManager(QObject):
-    """Manages multiple PyPTV playlists with persistence."""
+    """Manages multiple PyIPTV playlists with persistence."""
 
     # Signals
     playlist_added = Signal(PlaylistEntry)
@@ -409,7 +409,7 @@ class PlaylistManager(QObject):
 
             # Create temporary file
             temp_fd, temp_file = tempfile.mkstemp(
-                suffix=".m3u8", prefix="pyptv_refresh_"
+                suffix=".m3u8", prefix="pyiptv_refresh_"
             )
             try:
                 with os.fdopen(temp_fd, "w", encoding="utf-8") as f:

@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Built with PySide6 6.5.0+
 - Python 3.8+ compatibility
 - Standard packaging with pyproject.toml
-- Entry point: `pyptv` command
+- Entry point: `pyiptv` command
 - Package data includes UI assets and themes
 
 ## [Unreleased]

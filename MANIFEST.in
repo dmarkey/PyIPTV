@@ -4,7 +4,7 @@ include LICENSE
 include requirements.txt
 
 # Include package data
-recursive-include pyptv/ui/images *.png *.ico *.svg
+recursive-include pyiptv/ui/images *.png *.ico *.svg
 
 # Include configuration files
 include pyproject.toml

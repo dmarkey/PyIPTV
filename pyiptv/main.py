@@ -5,10 +5,10 @@ from pathlib import Path
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
 from PySide6.QtCore import Qt, QTimer
-from pyptv.ui.main_window import MainWindow
-from pyptv.ui.themes import ThemeManager
-from pyptv.ui.playlist_manager_window import PlaylistManagerWindow
-from pyptv.settings_manager import SettingsManager
+from pyiptv.ui.main_window import MainWindow
+from pyiptv.ui.themes import ThemeManager
+from pyiptv.ui.playlist_manager_window import PlaylistManagerWindow
+from pyiptv.settings_manager import SettingsManager
 
 os.environ["LIBVA_DRIVER_NAME"] = "i965"  # Software VA-API
 
@@ -20,7 +20,7 @@ def signal_handler(signum, frame):
 
 
 def main():
-    """Main function to run the PyPTV application."""
+    """Main function to run the PyIPTV application."""
     app = QApplication(sys.argv)
 
     # Set up signal handlers for clean shutdown
@@ -35,9 +35,9 @@ def main():
     timer.timeout.connect(lambda: None)  # Just wake up Qt event loop
 
     # Set application properties
-    app.setApplicationName("PyPTV")
+    app.setApplicationName("PyIPTV")
     app.setApplicationVersion("1.0.0")
-    app.setOrganizationName("PyPTV")
+    app.setOrganizationName("PyIPTV")
 
     # Set application icon for taskbar using robust path resolution
 

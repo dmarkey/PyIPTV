@@ -216,7 +216,7 @@ class VideoPlaceholder(QWidget):
             painter.drawText(10, y_offset - (i * 15), shortcut)
 
         # Bottom right info
-        info_text = "PyPTV"
+        info_text = "PyIPTV"
         fm = QFontMetrics(font)
         text_width = fm.horizontalAdvance(info_text)
         painter.drawText(width - text_width - 10, height - 10, info_text)
