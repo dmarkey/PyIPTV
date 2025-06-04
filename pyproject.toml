@@ -34,7 +34,6 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Multimedia :: Video :: Display",
-    "Topic :: Multimedia :: Video :: Playback",
     "Environment :: X11 Applications :: Qt",
 ]
 requires-python = ">=3.8"
