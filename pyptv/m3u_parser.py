@@ -1,22 +1,30 @@
 import re
 import os
 import time
+from .cache_manager import M3UCacheManager
+
 
 class M3UParser:
     """
     Parses M3U playlist files, extracting channel information.
-    Enhanced for large files with progress reporting and performance optimization.
+    Enhanced for large files with progress reporting, performance optimization, and intelligent caching.
     """
 
-    def __init__(self, progress_callback=None):
+    def __init__(self, progress_callback=None, enable_cache=True, cache_dir=None):
         self.channels = []
-        self.categories = {} # Stores channels grouped by category title
+        self.categories = {}  # Stores channels grouped by category title
         self.progress_callback = progress_callback
         self._should_cancel = False
-        
+
+        # Cache settings
+        self.enable_cache = enable_cache
+        self.cache_manager = M3UCacheManager(cache_dir) if enable_cache else None
+
         # Performance optimization settings
         self.chunk_size = 8192 * 4  # 32KB chunks for better I/O performance
-        self.progress_update_interval = 100  # Update progress every 100 channels (more responsive)
+        self.progress_update_interval = (
+            100  # Update progress every 100 channels (more responsive)
+        )
         self.batch_size = 500  # Process channels in batches for memory efficiency
 
     def cancel_parsing(self):
@@ -25,7 +33,7 @@ class M3UParser:
 
     def parse_m3u_from_file(self, filepath):
         """
-        Parses an M3U file from the given filepath with progress reporting.
+        Parses an M3U file from the given filepath with progress reporting and intelligent caching.
 
         Args:
             filepath (str): The path to the M3U file.
@@ -37,21 +45,64 @@ class M3UParser:
         self.channels = []
         self.categories = {}
         self._should_cancel = False
-        
+
         try:
+            # Check if file exists
+            if not os.path.exists(filepath):
+                print(f"Error: File not found at {filepath}")
+                return [], {}
+
+            # Try to load from cache first (if enabled)
+            if self.enable_cache and self.cache_manager:
+                cache_result = self.cache_manager.load_cache(filepath)
+                if cache_result is not None:
+                    print(
+                        f"Loading M3U data from cache for: {os.path.basename(filepath)}"
+                    )
+                    self.channels, self.categories = cache_result
+
+                    # Report instant completion to progress callback
+                    if self.progress_callback:
+                        self.progress_callback(100, len(self.channels))
+
+                    return self.channels, self.categories
+
+            # Cache miss or disabled - parse normally
+            print(f"Parsing M3U file: {os.path.basename(filepath)}")
+
             # Get file size for progress calculation
             file_size = os.path.getsize(filepath)
-            
+
             # Use binary mode for better performance with large files
-            with open(filepath, 'rb') as f:
-                return self._parse_content_with_progress(f, file_size)
+            with open(filepath, "rb") as f:
+                result = self._parse_content_with_progress(f, file_size)
+
+            # Save to cache if enabled and parsing was successful
+            if (
+                self.enable_cache
+                and self.cache_manager
+                and not self._should_cancel
+                and self.channels
+            ):
+                try:
+                    if self.cache_manager.save_cache(
+                        filepath, self.channels, self.categories
+                    ):
+                        print(
+                            f"Cached M3U data for future use: {os.path.basename(filepath)}"
+                        )
+                except Exception as e:
+                    print(f"Warning: Could not save cache: {e}")
+
+            return result
+
         except FileNotFoundError:
             print(f"Error: File not found at {filepath}")
             return [], {}
         except Exception as e:
             print(f"An error occurred while parsing the file: {e}")
             return [], {}
-    
+
     def set_process_events_callback(self, callback):
         """Set a callback for processing Qt events during parsing."""
         self._process_events = callback
@@ -79,49 +130,53 @@ class M3UParser:
         channels_processed = 0
         bytes_read = 0
         last_progress_time = time.time()
-        
+
         # Buffer for incomplete lines
         line_buffer = ""
-        
+
         try:
             # Read first chunk to check for #EXTM3U
             first_chunk = file_obj.read(1024)
             try:
-                first_chunk_text = first_chunk.decode('utf-8', errors='ignore')
-                if first_chunk_text and not first_chunk_text.strip().startswith("#EXTM3U"):
-                    print("Warning: File does not start with #EXTM3U. It might not be a valid M3U playlist.")
-            except:
+                first_chunk_text = first_chunk.decode("utf-8", errors="ignore")
+                if first_chunk_text and not first_chunk_text.strip().startswith(
+                    "#EXTM3U"
+                ):
+                    print(
+                        "Warning: File does not start with #EXTM3U. It might not be a valid M3U playlist."
+                    )
+            except (UnicodeDecodeError, AttributeError):
                 pass
-            
+
             # Reset file position and start chunked reading
             file_obj.seek(0)
-            
+
             while True:
                 if self._should_cancel:
                     break
-                
+
                 # Read chunk in binary mode for performance
                 chunk = file_obj.read(self.chunk_size)
                 if not chunk:
                     break
-                
+
                 bytes_read += len(chunk)
-                
+
                 # Decode chunk with error handling
                 try:
-                    chunk_text = chunk.decode('utf-8', errors='ignore')
+                    chunk_text = chunk.decode("utf-8", errors="ignore")
                 except (UnicodeDecodeError, AttributeError):
                     # Skip problematic chunks
                     continue
-                
+
                 # Combine with previous incomplete line
                 full_text = line_buffer + chunk_text
-                lines = full_text.split('\n')
-                
+                lines = full_text.split("\n")
+
                 # Keep the last potentially incomplete line for next iteration
                 line_buffer = lines[-1]
                 lines = lines[:-1]
-                
+
                 # Process complete lines in this chunk
                 for line in lines:
                     line = line.strip()
@@ -133,41 +188,48 @@ class M3UParser:
                     elif line.startswith("#EXTVLCOPT:") or line.startswith("#EXTGRP:"):
                         # Handle these tags if needed in the future
                         pass
-                    elif not line.startswith("#"): # This should be the URL
-                        if current_channel_info: # Ensure we have preceding #EXTINF info
-                            current_channel_info['url'] = line
+                    elif not line.startswith("#"):  # This should be the URL
+                        if (
+                            current_channel_info
+                        ):  # Ensure we have preceding #EXTINF info
+                            current_channel_info["url"] = line
                             self.channels.append(current_channel_info)
 
-                            group_title = current_channel_info.get('group-title', 'Uncategorized')
+                            group_title = current_channel_info.get(
+                                "group-title", "Uncategorized"
+                            )
                             if group_title not in self.categories:
                                 self.categories[group_title] = []
                             self.categories[group_title].append(current_channel_info)
 
-                            current_channel_info = {} # Reset for the next channel
+                            current_channel_info = {}  # Reset for the next channel
                             channels_processed += 1
-                
+
                 # Update progress more frequently (time-based + count-based)
                 current_time = time.time()
-                if (self.progress_callback and
-                    (channels_processed % self.progress_update_interval == 0 or
-                     current_time - last_progress_time > 0.5)):  # Update every 500ms minimum
-                    
+                if self.progress_callback and (
+                    channels_processed % self.progress_update_interval == 0
+                    or current_time - last_progress_time > 0.5
+                ):  # Update every 500ms minimum
+
                     progress = min(100, int((bytes_read / file_size) * 100))
                     self.progress_callback(progress, channels_processed)
                     last_progress_time = current_time
-                    
+
                     # Allow Qt event processing to prevent UI freezing
-                    if hasattr(self, '_process_events'):
+                    if hasattr(self, "_process_events"):
                         self._process_events()
-            
+
             # Process any remaining content in buffer
             if line_buffer.strip() and not self._should_cancel:
                 line = line_buffer.strip()
                 if not line.startswith("#") and current_channel_info:
-                    current_channel_info['url'] = line
+                    current_channel_info["url"] = line
                     self.channels.append(current_channel_info)
-                    
-                    group_title = current_channel_info.get('group-title', 'Uncategorized')
+
+                    group_title = current_channel_info.get(
+                        "group-title", "Uncategorized"
+                    )
                     if group_title not in self.categories:
                         self.categories[group_title] = []
                     self.categories[group_title].append(current_channel_info)
@@ -175,7 +237,7 @@ class M3UParser:
 
         except Exception as e:
             print(f"Error during parsing: {e}")
-            
+
         # Final progress update
         if self.progress_callback:
             self.progress_callback(100, channels_processed)
@@ -193,7 +255,9 @@ class M3UParser:
         try:
             first_line = next(line_iter).strip()
             if not first_line.startswith("#EXTM3U"):
-                print("Warning: File does not start with #EXTM3U. It might not be a valid M3U playlist.")
+                print(
+                    "Warning: File does not start with #EXTM3U. It might not be a valid M3U playlist."
+                )
         except StopIteration:
             print("Warning: Empty M3U content.")
             return self.channels, self.categories
@@ -207,17 +271,19 @@ class M3UParser:
                 current_channel_info = self._parse_extinf_line(line)
             elif line.startswith("#EXTVLCOPT:") or line.startswith("#EXTGRP:"):
                 pass
-            elif not line.startswith("#"): # This should be the URL
-                if current_channel_info: # Ensure we have preceding #EXTINF info
-                    current_channel_info['url'] = line
+            elif not line.startswith("#"):  # This should be the URL
+                if current_channel_info:  # Ensure we have preceding #EXTINF info
+                    current_channel_info["url"] = line
                     self.channels.append(current_channel_info)
 
-                    group_title = current_channel_info.get('group-title', 'Uncategorized')
+                    group_title = current_channel_info.get(
+                        "group-title", "Uncategorized"
+                    )
                     if group_title not in self.categories:
                         self.categories[group_title] = []
                     self.categories[group_title].append(current_channel_info)
 
-                    current_channel_info = {} # Reset for the next channel
+                    current_channel_info = {}  # Reset for the next channel
 
         return self.channels, self.categories
 
@@ -230,43 +296,103 @@ class M3UParser:
         # Regex to capture key-value pairs like tvg-id="value" and the trailing channel name
         # It handles cases where values might be empty or contain various characters.
         # The last part captures the channel name after the comma.
-        match = re.match(r'#EXTINF:(?P<duration>-?\d+)(?:\s+(?P<attributes>.*?))?,(?P<name>.*)', line)
+        match = re.match(
+            r"#EXTINF:(?P<duration>-?\d+)(?:\s+(?P<attributes>.*?))?,(?P<name>.*)", line
+        )
         if not match:
             # Fallback for lines that might not have attributes or a comma
             # e.g., #EXTINF:-1,Channel Name
-            simple_match = re.match(r'#EXTINF:(?P<duration>-?\d+),(?P<name>.*)', line)
+            simple_match = re.match(r"#EXTINF:(?P<duration>-?\d+),(?P<name>.*)", line)
             if simple_match:
-                info['duration'] = simple_match.group('duration')
-                info['name'] = simple_match.group('name').strip()
-                info['tvg-name'] = info['name'] # Use name as tvg-name if not present
+                info["duration"] = simple_match.group("duration")
+                info["name"] = simple_match.group("name").strip()
+                info["tvg-name"] = info["name"]  # Use name as tvg-name if not present
             else:
                 # If even the simple match fails, it's a malformed line.
                 # We might log this or return an empty dict.
                 # print(f"Warning: Malformed #EXTINF line: {line}")
-                return {} # Return empty if malformed
+                return {}  # Return empty if malformed
         else:
-            info['duration'] = match.group('duration')
-            info['name'] = match.group('name').strip() # This is the name after the comma
+            info["duration"] = match.group("duration")
+            info["name"] = match.group(
+                "name"
+            ).strip()  # This is the name after the comma
 
-            attributes_str = match.group('attributes')
+            attributes_str = match.group("attributes")
             if attributes_str:
                 # Regex for individual attributes: key="value"
-                attr_matches = re.findall(r'([a-zA-Z0-9_-]+)=["\'](.*?)["\']', attributes_str)
+                attr_matches = re.findall(
+                    r'([a-zA-Z0-9_-]+)=["\'](.*?)["\']', attributes_str
+                )
                 for key, value in attr_matches:
-                    info[key.lower()] = value # Store keys in lowercase for consistency
+                    info[key.lower()] = value  # Store keys in lowercase for consistency
 
             # Ensure tvg-name is present, fallback to name if not
-            if 'tvg-name' not in info or not info['tvg-name']:
-                info['tvg-name'] = info['name']
+            if "tvg-name" not in info or not info["tvg-name"]:
+                info["tvg-name"] = info["name"]
 
         # Default values for common fields if not found
-        info.setdefault('tvg-id', '')
-        info.setdefault('tvg-logo', '')
-        info.setdefault('group-title', 'Uncategorized')
+        info.setdefault("tvg-id", "")
+        info.setdefault("tvg-logo", "")
+        info.setdefault("group-title", "Uncategorized")
 
         return info
 
-if __name__ == '__main__':
+    def invalidate_cache(self, filepath):
+        """
+        Invalidate cache for a specific M3U file.
+
+        Args:
+            filepath (str): Path to the M3U file
+
+        Returns:
+            bool: True if cache was invalidated, False otherwise
+        """
+        if self.enable_cache and self.cache_manager:
+            return self.cache_manager.invalidate_cache(filepath)
+        return False
+
+    def get_cache_info(self, filepath):
+        """
+        Get cache information for a specific M3U file.
+
+        Args:
+            filepath (str): Path to the M3U file
+
+        Returns:
+            dict or None: Cache information or None if no cache exists
+        """
+        if self.enable_cache and self.cache_manager:
+            return self.cache_manager.get_cache_info(filepath)
+        return None
+
+    def cleanup_old_cache(self, max_age_days=None):
+        """
+        Clean up old cache files.
+
+        Args:
+            max_age_days (int, optional): Maximum age in days for cache files
+
+        Returns:
+            int: Number of cache entries removed
+        """
+        if self.enable_cache and self.cache_manager:
+            return self.cache_manager.cleanup_old_cache(max_age_days)
+        return 0
+
+    def get_cache_stats(self):
+        """
+        Get statistics about the cache.
+
+        Returns:
+            dict: Cache statistics
+        """
+        if self.enable_cache and self.cache_manager:
+            return self.cache_manager.get_cache_stats()
+        return {}
+
+
+if __name__ == "__main__":
     # Example Usage:
     parser = M3UParser()
 
@@ -304,11 +430,12 @@ http://stream.example.com/no_comma
             print(f"  Category '{cat}': {len(chans)} channels")
             # print(f"    First channel in '{cat}': {chans[0]['name']}")
 
-
     # Example parsing from content lines
     print("\n--- Parsing from direct content ---")
     content_list = dummy_m3u_content.splitlines()
-    all_channels_content, categories_dict_content = parser.parse_m3u_from_content(content_list)
+    all_channels_content, categories_dict_content = parser.parse_m3u_from_content(
+        content_list
+    )
     if all_channels_content:
         print(f"\nTotal channels parsed from content: {len(all_channels_content)}")
         print("\nCategories and their channel counts (from content):")
@@ -317,6 +444,7 @@ http://stream.example.com/no_comma
 
     # Clean up dummy file
     import os
+
     try:
         os.remove("test.m3u")
     except OSError as e:
