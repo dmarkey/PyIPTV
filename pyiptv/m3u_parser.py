@@ -161,17 +161,26 @@ class M3UParser:
         # Buffer for incomplete lines
         line_buffer = ""
 
+        # Detect encoding from the first chunk
+        detected_encoding = self._detect_encoding_from_bytes(file_obj)
+
         try:
             # Read first chunk to check for #EXTM3U
             first_chunk = file_obj.read(1024)
             try:
-                first_chunk_text = first_chunk.decode("utf-8", errors="ignore")
-                if first_chunk_text and not first_chunk_text.strip().startswith(
-                    "#EXTM3U"
-                ):
-                    print(
-                        "Warning: File does not start with #EXTM3U. It might not be a valid M3U playlist."
-                    )
+                first_chunk_text = first_chunk.decode(detected_encoding, errors="ignore")
+                if first_chunk_text:
+                    # Remove BOM if present
+                    if first_chunk_text.startswith('\ufeff'):
+                        first_chunk_text = first_chunk_text[1:]
+
+                    # Check if #EXTM3U appears anywhere in the first few lines
+                    first_lines = first_chunk_text.strip().split('\n')[:3]
+                    has_extm3u = any(line.strip().startswith("#EXTM3U") for line in first_lines)
+                    if not has_extm3u:
+                        print(
+                            "Warning: File does not start with #EXTM3U. It might not be a valid M3U playlist."
+                        )
             except (UnicodeDecodeError, AttributeError):
                 pass
 
@@ -191,10 +200,24 @@ class M3UParser:
 
                 # Decode chunk with error handling
                 try:
-                    chunk_text = chunk.decode("utf-8", errors="ignore")
+                    chunk_text = chunk.decode(detected_encoding, errors="ignore")
                 except (UnicodeDecodeError, AttributeError):
-                    # Skip problematic chunks
-                    continue
+                    # Try fallback encodings
+                    chunk_text = None
+                    for fallback_encoding in ["utf-8", "latin-1", "cp1252"]:
+                        try:
+                            chunk_text = chunk.decode(fallback_encoding, errors="ignore")
+                            break
+                        except (UnicodeDecodeError, AttributeError):
+                            continue
+
+                    if chunk_text is None:
+                        # Skip problematic chunks
+                        continue
+
+                # Remove BOM if present at the beginning of the file
+                if not line_buffer and chunk_text.startswith('\ufeff'):
+                    chunk_text = chunk_text[1:]
 
                 # Combine with previous incomplete line
                 full_text = line_buffer + chunk_text
@@ -211,7 +234,14 @@ class M3UParser:
                         continue
 
                     if line.startswith("#EXTINF:"):
-                        current_channel_info = self._parse_extinf_line(line)
+                        try:
+                            current_channel_info = self._parse_extinf_line(line)
+                        except Exception as e:
+                            print(f"Error parsing line: {line}")
+                            print(f"Error: {e}")
+                            import traceback
+                            traceback.print_exc()
+                            current_channel_info = {}
                     elif line.startswith("#EXTVLCOPT:") or line.startswith("#EXTGRP:"):
                         # Handle these tags if needed in the future
                         pass
@@ -279,23 +309,34 @@ class M3UParser:
         current_channel_info = {}
         line_iter = iter(content_iterable)
 
-        try:
-            first_line = next(line_iter).strip()
-            if not first_line.startswith("#EXTM3U"):
-                print(
-                    "Warning: File does not start with #EXTM3U. It might not be a valid M3U playlist."
-                )
-        except StopIteration:
+        # Convert to list to check first line and process normally
+        content_lines = list(line_iter)
+        if not content_lines:
             print("Warning: Empty M3U content.")
             return self.channels, self.categories
 
-        for line in line_iter:
+        # Check if first few lines contain #EXTM3U
+        first_few_lines = content_lines[:3]
+        has_extm3u = any(line.strip().startswith("#EXTM3U") for line in first_few_lines)
+        if not has_extm3u:
+            print(
+                "Warning: File does not start with #EXTM3U. It might not be a valid M3U playlist."
+            )
+
+        for line in content_lines:
             line = line.strip()
             if not line:
                 continue
 
             if line.startswith("#EXTINF:"):
-                current_channel_info = self._parse_extinf_line(line)
+                try:
+                    current_channel_info = self._parse_extinf_line(line)
+                except Exception as e:
+                    print(f"Error parsing line: {line}")
+                    print(f"Error: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    current_channel_info = {}
             elif line.startswith("#EXTVLCOPT:") or line.startswith("#EXTGRP:"):
                 pass
             elif not line.startswith("#"):  # This should be the URL
@@ -314,6 +355,58 @@ class M3UParser:
 
         return self.channels, self.categories
 
+    def _detect_encoding_from_bytes(self, file_obj):
+        """
+        Detect encoding from file bytes.
+
+        Args:
+            file_obj: File object opened in binary mode
+
+        Returns:
+            str: Detected encoding
+        """
+        # Save current position
+        current_pos = file_obj.tell()
+
+        try:
+            # Read first few bytes to check for BOM
+            file_obj.seek(0)
+            raw_data = file_obj.read(4)
+
+            # Check for UTF-16 BOM
+            if raw_data.startswith(b'\xff\xfe'):
+                return "utf-16le"
+            elif raw_data.startswith(b'\xfe\xff'):
+                return "utf-16be"
+            # Check for UTF-8 BOM
+            elif raw_data.startswith(b'\xef\xbb\xbf'):
+                return "utf-8-sig"
+
+            # Read more data to test encodings
+            file_obj.seek(0)
+            test_data = file_obj.read(1024)
+
+            # Try different encodings
+            encodings_to_try = ["utf-8", "utf-16", "utf-16le", "utf-16be", "latin-1", "cp1252", "iso-8859-1"]
+
+            for encoding in encodings_to_try:
+                try:
+                    decoded = test_data.decode(encoding)
+                    # Check if it looks like M3U content
+                    if "#EXTM3U" in decoded or "#EXTINF" in decoded:
+                        return encoding
+                except (UnicodeDecodeError, UnicodeError):
+                    continue
+
+            # Default fallback
+            return "utf-8"
+
+        except Exception:
+            return "utf-8"
+        finally:
+            # Restore file position
+            file_obj.seek(current_pos)
+
     def _parse_extinf_line(self, line):
         """
         Parses a #EXTINF line to extract channel attributes.
@@ -326,13 +419,14 @@ class M3UParser:
         match = re.match(
             r"#EXTINF:(?P<duration>-?\d+)(?:\s+(?P<attributes>.*?))?,(?P<name>.*)", line
         )
+
         if not match:
             # Fallback for lines that might not have attributes or a comma
             # e.g., #EXTINF:-1,Channel Name
             simple_match = re.match(r"#EXTINF:(?P<duration>-?\d+),(?P<name>.*)", line)
             if simple_match:
                 info["duration"] = simple_match.group("duration")
-                info["name"] = simple_match.group("name").strip()
+                info["name"] = simple_match.group("n").strip()
                 info["tvg-name"] = info["name"]  # Use name as tvg-name if not present
             else:
                 # If even the simple match fails, it's a malformed line.
@@ -340,10 +434,13 @@ class M3UParser:
                 # print(f"Warning: Malformed #EXTINF line: {line}")
                 return {}  # Return empty if malformed
         else:
+            # Match found - parse attributes and name
             info["duration"] = match.group("duration")
-            info["name"] = match.group(
-                "name"
-            ).strip()  # This is the name after the comma
+            # Handle both "n" and "name" group names for compatibility
+            try:
+                info["name"] = match.group("n").strip()
+            except IndexError:
+                info["name"] = match.group("name").strip()
 
             attributes_str = match.group("attributes")
             if attributes_str:
@@ -362,6 +459,22 @@ class M3UParser:
         info.setdefault("tvg-id", "")
         info.setdefault("tvg-logo", "")
         info.setdefault("group-title", "Uncategorized")
+
+        # Detect content type based on attributes
+        tvg_type = info.get("tvg-type", "").lower()
+        if tvg_type in ["serie", "series", "episode"]:
+            info["content_type"] = "series"
+        elif tvg_type in ["movie", "film"]:
+            info["content_type"] = "movie"
+        else:
+            # Check if it looks like series content based on name patterns
+            name = info.get("name", "").lower()
+            if any(pattern in name for pattern in ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "e0", "e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "season", "episode"]):
+                info["content_type"] = "series"
+            elif any(pattern in name for pattern in ["movie", "film", "(20", "(19"]):
+                info["content_type"] = "movie"
+            else:
+                info["content_type"] = "live"
 
         return info
 
