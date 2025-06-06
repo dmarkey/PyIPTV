@@ -35,8 +35,10 @@ from pyiptv.ui.components.simplified_operations import SimplifiedOperationManage
 from pyiptv.ui.components.unified_status_system import StatusManager, UnifiedStatusBar
 from pyiptv.ui.components.video_placeholder import VideoPlaceholder
 from pyiptv.ui.components.virtualized_channel_list import VirtualizedChannelList
+from pyiptv.ui.components.subtitle_widget import SubtitleDisplayWidget, SubtitleControlWidget
 from pyiptv.ui.playlist_manager_window import PlaylistManagerWindow
 from pyiptv.ui.themes import ModernDarkTheme, ThemeManager
+from pyiptv.subtitle_manager import SubtitleManager
 
 # Get the directory containing this file
 _CURRENT_DIR = Path(__file__).parent
@@ -202,6 +204,7 @@ class MainWindow(QMainWindow):
 
         self.init_ui()
         self.init_player()
+        self.init_subtitles()
         self.setup_shortcuts()
 
         self.load_initial_m3u()
@@ -402,6 +405,27 @@ class MainWindow(QMainWindow):
 
         print("QMediaPlayer initialized successfully")
 
+    def init_subtitles(self):
+        """Initialize subtitle management system."""
+        # Create subtitle manager
+        self.subtitle_manager = SubtitleManager(self)
+
+        # Create subtitle display widget
+        self.subtitle_display = SubtitleDisplayWidget(self)
+        self.subtitle_display.hide()  # Initially hidden
+
+        # Connect subtitle manager signals
+        self.subtitle_manager.subtitle_text_updated.connect(
+            self.subtitle_display.update_subtitle_text
+        )
+
+        # Connect to player position updates for subtitle timing
+        if hasattr(self.player, 'position_changed'):
+            self.player.position_changed.connect(self._on_position_changed_for_subtitles)
+
+        # Add subtitle controls to settings dialog (will be implemented later)
+        print("Subtitle system initialized successfully")
+
     def init_simplified_ux_system(self):
         """Initialize the simplified UX system with just status bar."""
         # Create status manager
@@ -491,6 +515,13 @@ class MainWindow(QMainWindow):
 
         self.help_shortcut_ctrl = QShortcut(QKeySequence("Ctrl+H"), self)
         self.help_shortcut_ctrl.activated.connect(self.show_keyboard_shortcuts_help)
+
+        # Subtitle controls
+        self.subtitle_toggle_shortcut = QShortcut(QKeySequence("C"), self)
+        self.subtitle_toggle_shortcut.activated.connect(self.toggle_subtitles)
+
+        self.subtitle_load_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
+        self.subtitle_load_shortcut.activated.connect(self.load_subtitle_file)
 
     def _on_playback_error(self, error_message):
         """Handles playback errors signaled by the media player."""
@@ -943,6 +974,50 @@ class MainWindow(QMainWindow):
         else:
             self.status_manager.show_info("No playlist to refresh", timeout=2000)
 
+    def toggle_subtitles(self):
+        """Toggle subtitle display on/off."""
+        if hasattr(self, 'subtitle_manager'):
+            if self.subtitle_manager.is_enabled:
+                self.subtitle_manager.disable_subtitles()
+                self.status_manager.show_info("Subtitles disabled", timeout=1500)
+            else:
+                self.subtitle_manager.enable_subtitles()
+                self.status_manager.show_info("Subtitles enabled", timeout=1500)
+        else:
+            self.status_manager.show_info("Subtitle system not available", timeout=2000)
+
+    def load_subtitle_file(self):
+        """Load a subtitle file manually."""
+        if hasattr(self, 'subtitle_manager'):
+            track = self.subtitle_manager.select_subtitle_file(self)
+            if track:
+                self.subtitle_manager.set_active_track(track.id)
+                self.status_manager.show_info(f"Loaded subtitle: {track.title}", timeout=2000)
+        else:
+            self.status_manager.show_info("Subtitle system not available", timeout=2000)
+
+    def _on_position_changed_for_subtitles(self, position_ms):
+        """Handle position changes for subtitle timing."""
+        if hasattr(self, 'subtitle_manager'):
+            # Convert milliseconds to seconds
+            position_seconds = position_ms / 1000.0
+            self.subtitle_manager.update_position(position_seconds)
+
+    def _update_subtitle_position(self):
+        """Update subtitle display position relative to video widget."""
+        if hasattr(self, 'subtitle_display') and self.subtitle_display.isVisible():
+            # Position subtitle over the video widget
+            video_geometry = self.video_widget.geometry()
+            if self.is_fullscreen:
+                # In fullscreen, position relative to the screen
+                screen_geometry = self.screen().geometry()
+                self.subtitle_display.position_subtitle(screen_geometry, "bottom")
+            else:
+                # In windowed mode, position relative to video widget
+                global_geometry = self.video_widget.mapToGlobal(video_geometry.topLeft())
+                video_geometry.moveTo(global_geometry)
+                self.subtitle_display.position_subtitle(video_geometry, "bottom")
+
     def show_keyboard_shortcuts_help(self):
         """Show keyboard shortcuts help dialog."""
         from PySide6.QtWidgets import (
@@ -999,6 +1074,12 @@ class MainWindow(QMainWindow):
 <table>
 <tr><td><b>Ctrl+F</b></td><td>Focus channel search</td></tr>
 <tr><td><b>Ctrl+Shift+F</b></td><td>Focus category search</td></tr>
+</table>
+
+<h3>📝 Subtitle Controls</h3>
+<table>
+<tr><td><b>C</b></td><td>Toggle subtitles on/off</td></tr>
+<tr><td><b>Ctrl+S</b></td><td>Load subtitle file</td></tr>
 </table>
 
 <h3>📁 File & Application</h3>
