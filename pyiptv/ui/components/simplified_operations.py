@@ -1,6 +1,7 @@
+from typing import Any, Dict, Optional
+
 from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import QApplication
-from typing import Optional, Any, Dict
 
 
 class BackgroundOperation(QThread):
@@ -134,8 +135,8 @@ class SimplifiedURLDownloadOperation(BackgroundOperation):
             self.emit_status("Saving playlist...")
 
             # Create temporary file
-            import tempfile
             import os
+            import tempfile
             import uuid
             from urllib.parse import urlparse
 

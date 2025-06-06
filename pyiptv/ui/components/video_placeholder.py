@@ -1,13 +1,13 @@
-from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import (
+    Property,
+    QEasingCurve,
+    QPoint,
+    QPropertyAnimation,
     Qt,
     QTimer,
-    QPropertyAnimation,
-    QEasingCurve,
-    Property,
-    QPoint,
 )
-from PySide6.QtGui import QPainter, QFont, QFontMetrics, QLinearGradient, QBrush, QColor
+from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QLinearGradient, QPainter
+from PySide6.QtWidgets import QWidget
 
 
 class VideoPlaceholder(QWidget):

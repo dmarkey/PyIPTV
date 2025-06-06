@@ -1,14 +1,16 @@
-import sys
 import os
 import signal
+import sys
 from pathlib import Path
-from PySide6.QtWidgets import QApplication
-from PySide6.QtGui import QIcon
+
 from PySide6.QtCore import Qt, QTimer
-from pyiptv.ui.main_window import MainWindow
-from pyiptv.ui.themes import ThemeManager
-from pyiptv.ui.playlist_manager_window import PlaylistManagerWindow
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import QApplication
+
 from pyiptv.settings_manager import SettingsManager
+from pyiptv.ui.main_window import MainWindow
+from pyiptv.ui.playlist_manager_window import PlaylistManagerWindow
+from pyiptv.ui.themes import ThemeManager
 
 os.environ["LIBVA_DRIVER_NAME"] = "i965"  # Software VA-API
 

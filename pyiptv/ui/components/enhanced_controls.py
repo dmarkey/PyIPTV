@@ -1,15 +1,15 @@
-from PySide6.QtWidgets import (
-    QWidget,
-    QHBoxLayout,
-    QVBoxLayout,
-    QPushButton,
-    QSlider,
-    QLabel,
-    QFrame,
-    QComboBox,
-)
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import (
+    QComboBox,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSlider,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 class EnhancedControlBar(QWidget):

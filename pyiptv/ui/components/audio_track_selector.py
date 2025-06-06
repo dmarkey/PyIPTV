@@ -1,13 +1,13 @@
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
+    QComboBox,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
-    QComboBox,
     QPushButton,
-    QGroupBox,
+    QVBoxLayout,
+    QWidget,
 )
-from PySide6.QtCore import Signal, QTimer
 
 
 class AudioTrackSelector(QWidget):

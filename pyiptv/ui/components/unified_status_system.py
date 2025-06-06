@@ -1,8 +1,9 @@
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton, QSizePolicy
-from PySide6.QtCore import QObject, Signal, QTimer, QPropertyAnimation, QByteArray
 import time
-from typing import Optional, List
 from enum import Enum
+from typing import List, Optional
+
+from PySide6.QtCore import QByteArray, QObject, QPropertyAnimation, QTimer, Signal
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget
 
 
 class StatusLevel(Enum):

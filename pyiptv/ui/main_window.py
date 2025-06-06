@@ -1,42 +1,42 @@
+import os
 import sys
+from pathlib import Path
+
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QAction, QIcon, QKeySequence, QShortcut
+from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
-    QPushButton,
+    QLabel,
     QLineEdit,
     QListWidget,
-    QLabel,
-    QSplitter,
-    QFileDialog,
-    QSizePolicy,
-    QMessageBox,
-    QDialog,
-    QCheckBox,
     QListWidgetItem,
-    QApplication,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QSizePolicy,
+    QSplitter,
     QStackedWidget,
-    QGraphicsOpacityEffect,
-    QComboBox,
+    QVBoxLayout,
+    QWidget,
 )
-from PySide6.QtGui import QIcon, QKeySequence, QAction, QShortcut
-from PySide6.QtCore import Qt, QTimer
-from pyiptv.ui.themes import ThemeManager
-from pyiptv.ui.playlist_manager_window import PlaylistManagerWindow
 
+from pyiptv.playlist_manager import PlaylistManager
 from pyiptv.qmedia_player import QMediaVideoPlayer
 from pyiptv.settings_manager import SettingsManager
-from pyiptv.playlist_manager import PlaylistManager
-from pyiptv.ui.components.virtualized_channel_list import VirtualizedChannelList
-from pyiptv.ui.components.video_placeholder import VideoPlaceholder
 from pyiptv.ui.components.enhanced_controls import EnhancedControlBar
-from pyiptv.ui.components.unified_status_system import UnifiedStatusBar, StatusManager
 from pyiptv.ui.components.simplified_operations import SimplifiedOperationManager
-from pyiptv.ui.themes import ModernDarkTheme
-from PySide6.QtMultimediaWidgets import QVideoWidget
-import os
-from pathlib import Path
+from pyiptv.ui.components.unified_status_system import StatusManager, UnifiedStatusBar
+from pyiptv.ui.components.video_placeholder import VideoPlaceholder
+from pyiptv.ui.components.virtualized_channel_list import VirtualizedChannelList
+from pyiptv.ui.playlist_manager_window import PlaylistManagerWindow
+from pyiptv.ui.themes import ModernDarkTheme, ThemeManager
 
 # Get the directory containing this file
 _CURRENT_DIR = Path(__file__).parent
@@ -257,6 +257,20 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
+        # --- Help Menu ---
+        help_menu = menubar.addMenu("&Help")
+
+        shortcuts_action = QAction("&Keyboard Shortcuts", self)
+        shortcuts_action.setShortcut("F1")
+        shortcuts_action.triggered.connect(self.show_keyboard_shortcuts_help)
+        help_menu.addAction(shortcuts_action)
+
+        help_menu.addSeparator()
+
+        about_action = QAction("&About PyIPTV", self)
+        about_action.triggered.connect(self.show_about_dialog)
+        help_menu.addAction(about_action)
+
         # --- Main Content Area (Splitter) ---
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.main_layout.addWidget(self.splitter)
@@ -407,29 +421,76 @@ class MainWindow(QMainWindow):
         self.is_busy = False
 
     def setup_shortcuts(self):
-        """Setup keyboard shortcuts for the application."""
-        # F11 or F for fullscreen toggle
+        """Setup comprehensive keyboard shortcuts for the application."""
+        # Playback controls
+        self.space_shortcut = QShortcut(QKeySequence("Space"), self)
+        self.space_shortcut.activated.connect(self.toggle_play_pause)
+
+        self.play_shortcut = QShortcut(QKeySequence("P"), self)
+        self.play_shortcut.activated.connect(self.toggle_play_pause)
+
+        self.stop_shortcut = QShortcut(QKeySequence("S"), self)
+        self.stop_shortcut.activated.connect(self.stop_playback)
+
+        # Volume controls
+        self.volume_up_shortcut = QShortcut(QKeySequence("Up"), self)
+        self.volume_up_shortcut.activated.connect(self.volume_up)
+
+        self.volume_down_shortcut = QShortcut(QKeySequence("Down"), self)
+        self.volume_down_shortcut.activated.connect(self.volume_down)
+
+        self.mute_shortcut = QShortcut(QKeySequence("M"), self)
+        self.mute_shortcut.activated.connect(self.toggle_mute)
+
+        # Channel navigation
+        self.next_channel_shortcut = QShortcut(QKeySequence("Right"), self)
+        self.next_channel_shortcut.activated.connect(self.next_channel)
+
+        self.prev_channel_shortcut = QShortcut(QKeySequence("Left"), self)
+        self.prev_channel_shortcut.activated.connect(self.previous_channel)
+
+        self.page_down_shortcut = QShortcut(QKeySequence("Page_Down"), self)
+        self.page_down_shortcut.activated.connect(self.channel_page_down)
+
+        self.page_up_shortcut = QShortcut(QKeySequence("Page_Up"), self)
+        self.page_up_shortcut.activated.connect(self.channel_page_up)
+
+        # Fullscreen controls
         self.fullscreen_shortcut = QShortcut(QKeySequence("F11"), self)
         self.fullscreen_shortcut.activated.connect(self.toggle_fullscreen)
 
         self.fullscreen_shortcut_f = QShortcut(QKeySequence("F"), self)
         self.fullscreen_shortcut_f.activated.connect(self.toggle_fullscreen)
 
-        # ESC to exit fullscreen
         self.escape_shortcut = QShortcut(QKeySequence("Escape"), self)
         self.escape_shortcut.activated.connect(self.exit_fullscreen)
 
-        # Ctrl+F to focus channel search
+        # Search and navigation
         self.channel_search_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
         self.channel_search_shortcut.activated.connect(self.focus_channel_search)
 
-        # Ctrl+Shift+F to focus category search
         self.category_search_shortcut = QShortcut(QKeySequence("Ctrl+Shift+F"), self)
         self.category_search_shortcut.activated.connect(self.focus_category_search)
 
-        # Space bar for play/pause
-        self.space_shortcut = QShortcut(QKeySequence("Space"), self)
-        self.space_shortcut.activated.connect(self.toggle_play_pause)
+        # Quick category selection (1-9)
+        for i in range(1, 10):
+            shortcut = QShortcut(QKeySequence(str(i)), self)
+            shortcut.activated.connect(
+                lambda idx=i - 1: self.select_category_by_index(idx)
+            )
+
+        # Application controls
+        self.refresh_shortcut = QShortcut(QKeySequence("F5"), self)
+        self.refresh_shortcut.activated.connect(self.refresh_playlist)
+
+        self.settings_shortcut = QShortcut(QKeySequence("Ctrl+,"), self)
+        self.settings_shortcut.activated.connect(self.open_settings_dialog)
+
+        self.help_shortcut = QShortcut(QKeySequence("F1"), self)
+        self.help_shortcut.activated.connect(self.show_keyboard_shortcuts_help)
+
+        self.help_shortcut_ctrl = QShortcut(QKeySequence("Ctrl+H"), self)
+        self.help_shortcut_ctrl.activated.connect(self.show_keyboard_shortcuts_help)
 
     def _on_playback_error(self, error_message):
         """Handles playback errors signaled by the media player."""
@@ -786,6 +847,215 @@ class MainWindow(QMainWindow):
 
         self.status_manager.show_info("Stopped", timeout=2000)
 
+    def volume_up(self):
+        """Increase volume by 5%."""
+        current_volume = self.control_bar.volume_slider.value()
+        new_volume = min(100, current_volume + 5)
+        self.control_bar.set_volume(new_volume)
+        self.on_volume_changed(new_volume)
+        self.status_manager.show_info(f"Volume: {new_volume}%", timeout=1500)
+
+    def volume_down(self):
+        """Decrease volume by 5%."""
+        current_volume = self.control_bar.volume_slider.value()
+        new_volume = max(0, current_volume - 5)
+        self.control_bar.set_volume(new_volume)
+        self.on_volume_changed(new_volume)
+        self.status_manager.show_info(f"Volume: {new_volume}%", timeout=1500)
+
+    def toggle_mute(self):
+        """Toggle mute state."""
+        if not hasattr(self, "_pre_mute_volume"):
+            self._pre_mute_volume = 80
+
+        current_volume = self.control_bar.volume_slider.value()
+        if current_volume > 0:
+            # Mute
+            self._pre_mute_volume = current_volume
+            self.control_bar.set_volume(0)
+            self.on_volume_changed(0)
+            self.status_manager.show_info("Muted", timeout=1500)
+        else:
+            # Unmute
+            self.control_bar.set_volume(self._pre_mute_volume)
+            self.on_volume_changed(self._pre_mute_volume)
+            self.status_manager.show_info(
+                f"Volume: {self._pre_mute_volume}%", timeout=1500
+            )
+
+    def next_channel(self):
+        """Select and play the next channel in the list."""
+        if hasattr(self.channel_list_widget, "select_next_channel"):
+            next_channel = self.channel_list_widget.select_next_channel()
+            if next_channel:
+                self.play_channel(next_channel)
+        else:
+            self.status_manager.show_info(
+                "Channel navigation not available", timeout=2000
+            )
+
+    def previous_channel(self):
+        """Select and play the previous channel in the list."""
+        if hasattr(self.channel_list_widget, "select_previous_channel"):
+            prev_channel = self.channel_list_widget.select_previous_channel()
+            if prev_channel:
+                self.play_channel(prev_channel)
+        else:
+            self.status_manager.show_info(
+                "Channel navigation not available", timeout=2000
+            )
+
+    def channel_page_down(self):
+        """Move down one page in the channel list."""
+        if hasattr(self.channel_list_widget, "page_down"):
+            self.channel_list_widget.page_down()
+        else:
+            self.status_manager.show_info("Page navigation not available", timeout=2000)
+
+    def channel_page_up(self):
+        """Move up one page in the channel list."""
+        if hasattr(self.channel_list_widget, "page_up"):
+            self.channel_list_widget.page_up()
+        else:
+            self.status_manager.show_info("Page navigation not available", timeout=2000)
+
+    def select_category_by_index(self, index):
+        """Select a category by its index (0-8 for categories 1-9)."""
+        if index < self.category_list_widget.count():
+            item = self.category_list_widget.item(index)
+            if item:
+                self.category_list_widget.setCurrentItem(item)
+                self.on_category_selected(item)
+                category_name = item.text()
+                self.status_manager.show_info(
+                    f"Selected category: {category_name}", timeout=2000
+                )
+        else:
+            self.status_manager.show_info(
+                f"Category {index + 1} not available", timeout=2000
+            )
+
+    def refresh_playlist(self):
+        """Refresh the current playlist."""
+        if self.current_m3u_path:
+            self.status_manager.show_info("Refreshing playlist...", timeout=0)
+            self.parse_m3u_file(self.current_m3u_path)
+        else:
+            self.status_manager.show_info("No playlist to refresh", timeout=2000)
+
+    def show_keyboard_shortcuts_help(self):
+        """Show keyboard shortcuts help dialog."""
+        from PySide6.QtWidgets import (
+            QDialog,
+            QHBoxLayout,
+            QPushButton,
+            QTextEdit,
+            QVBoxLayout,
+        )
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Keyboard Shortcuts - PyIPTV")
+        dialog.setModal(True)
+        dialog.resize(600, 500)
+
+        layout = QVBoxLayout(dialog)
+
+        # Create text widget with shortcuts
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+
+        shortcuts_text = """
+<h2>PyIPTV Keyboard Shortcuts</h2>
+
+<h3>🎮 Playback Controls</h3>
+<table>
+<tr><td><b>Space / P</b></td><td>Play/Pause</td></tr>
+<tr><td><b>S</b></td><td>Stop playback</td></tr>
+</table>
+
+<h3>🔊 Volume Controls</h3>
+<table>
+<tr><td><b>Up Arrow</b></td><td>Volume up (+5%)</td></tr>
+<tr><td><b>Down Arrow</b></td><td>Volume down (-5%)</td></tr>
+<tr><td><b>M</b></td><td>Toggle mute</td></tr>
+</table>
+
+<h3>📺 Channel Navigation</h3>
+<table>
+<tr><td><b>Right Arrow</b></td><td>Next channel</td></tr>
+<tr><td><b>Left Arrow</b></td><td>Previous channel</td></tr>
+<tr><td><b>Page Down</b></td><td>Page down in channel list</td></tr>
+<tr><td><b>Page Up</b></td><td>Page up in channel list</td></tr>
+<tr><td><b>1-9</b></td><td>Select category by number</td></tr>
+</table>
+
+<h3>🖥️ Display Controls</h3>
+<table>
+<tr><td><b>F11 / F</b></td><td>Toggle fullscreen</td></tr>
+<tr><td><b>Escape</b></td><td>Exit fullscreen</td></tr>
+</table>
+
+<h3>🔍 Search & Navigation</h3>
+<table>
+<tr><td><b>Ctrl+F</b></td><td>Focus channel search</td></tr>
+<tr><td><b>Ctrl+Shift+F</b></td><td>Focus category search</td></tr>
+</table>
+
+<h3>📁 File & Application</h3>
+<table>
+<tr><td><b>Ctrl+O</b></td><td>Open M3U file</td></tr>
+<tr><td><b>Ctrl+P</b></td><td>Playlist manager</td></tr>
+<tr><td><b>F5</b></td><td>Refresh playlist</td></tr>
+<tr><td><b>Ctrl+,</b></td><td>Settings</td></tr>
+<tr><td><b>F1 / Ctrl+H</b></td><td>Show this help</td></tr>
+<tr><td><b>Ctrl+Q</b></td><td>Quit application</td></tr>
+</table>
+
+<p><i>Tip: Most shortcuts work in both windowed and fullscreen modes.</i></p>
+        """
+
+        text_edit.setHtml(shortcuts_text)
+        layout.addWidget(text_edit)
+
+        # Close button
+        button_layout = QHBoxLayout()
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(dialog.accept)
+        button_layout.addStretch()
+        button_layout.addWidget(close_button)
+        layout.addLayout(button_layout)
+
+        dialog.exec()
+
+    def show_about_dialog(self):
+        """Show about dialog."""
+        from PySide6.QtWidgets import QMessageBox
+
+        about_text = """
+<h2>PyIPTV</h2>
+<p><b>Version:</b> 1.0.0</p>
+<p><b>A Modern IPTV Player</b></p>
+
+<p>PyIPTV is a feature-rich IPTV player built with PySide6/Qt6, designed for
+streaming live television content from M3U playlists.</p>
+
+<p><b>Features:</b></p>
+<ul>
+<li>📺 M3U Playlist Support</li>
+<li>🎨 Modern Qt6 Interface</li>
+<li>📂 Category Organization</li>
+<li>🔍 Search & Filtering</li>
+<li>🌓 Theme Support</li>
+<li>⚡ Performance Optimized</li>
+</ul>
+
+<p><b>Author:</b> David Markey</p>
+<p><b>License:</b> MIT</p>
+<p><b>Website:</b> <a href="https://github.com/dmarkey/PyIPTV">https://github.com/dmarkey/PyIPTV</a></p>
+        """
+
+        QMessageBox.about(self, "About PyIPTV", about_text)
+
     def update_player_ui_state(self):
         """Periodically updates UI elements based on player state."""
         if self.player:
@@ -1018,11 +1288,13 @@ class MainWindow(QMainWindow):
 
     def on_video_double_click_docked(self, event):
         """Handle double-click on video widget in docked mode."""
+        _ = event  # Unused parameter
         if not self.is_fullscreen:
             self.enter_fullscreen()
 
     def on_video_double_click(self, event):
         """Handle double-click on video widget in fullscreen mode."""
+        _ = event  # Unused parameter
         self.exit_fullscreen()
 
     def on_video_key_press(self, event):

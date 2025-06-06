@@ -1,6 +1,5 @@
-from PySide6.QtCore import QObject, Signal, QUrl, QTimer, Qt
-from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PySide6.QtMultimedia import QMediaMetaData
+from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
+from PySide6.QtMultimedia import QAudioOutput, QMediaMetaData, QMediaPlayer
 
 
 class QMediaVideoPlayer(QObject):

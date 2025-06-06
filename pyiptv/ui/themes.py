@@ -1,7 +1,8 @@
 import os
-from PySide6.QtGui import QPalette, QColor
-from PySide6.QtWidgets import QStyleFactory
 from enum import Enum
+
+from PySide6.QtGui import QColor, QPalette
+from PySide6.QtWidgets import QStyleFactory
 
 
 class ThemeMode(Enum):
