@@ -1,15 +1,15 @@
+from PySide6.QtCore import QRect, Qt, QTimer, Signal
+from PySide6.QtGui import QFontMetrics, QPainter, QPalette
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QScrollBar,
     QFrame,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
-    QHBoxLayout,
     QPushButton,
+    QScrollBar,
+    QVBoxLayout,
+    QWidget,
 )
-from PySide6.QtCore import Qt, QTimer, Signal, QRect
-from PySide6.QtGui import QPainter, QFontMetrics, QPalette
 
 
 class VirtualizedChannelList(QWidget):

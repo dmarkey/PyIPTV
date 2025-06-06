@@ -1,12 +1,14 @@
-import os
 import json
+import os
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
-from PySide6.QtCore import QObject, Signal
-from pyiptv.m3u_parser import M3UParser
+
 import requests
+from PySide6.QtCore import QObject, Signal
+
 from pyiptv.cache_manager import M3UCacheManager
+from pyiptv.m3u_parser import M3UParser
 
 
 class PlaylistEntry:

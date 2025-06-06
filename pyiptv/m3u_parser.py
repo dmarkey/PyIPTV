@@ -1,6 +1,8 @@
-import re
 import os
+import re
 import time
+from typing import IO, Any, Callable, Dict, List, Optional, Tuple, Union
+
 from .cache_manager import M3UCacheManager
 
 
@@ -10,15 +12,26 @@ class M3UParser:
     Enhanced for large files with progress reporting, performance optimization, and intelligent caching.
     """
 
-    def __init__(self, progress_callback=None, enable_cache=True, cache_dir=None):
-        self.channels = []
-        self.categories = {}  # Stores channels grouped by category title
+    def __init__(
+        self,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        enable_cache: bool = True,
+        cache_dir: Optional[str] = None,
+        cache_manager: Optional[M3UCacheManager] = None,
+    ) -> None:
+        self.channels: List[Dict[str, str]] = []
+        self.categories: Dict[str, List[Dict[str, str]]] = (
+            {}
+        )  # Stores channels grouped by category title
         self.progress_callback = progress_callback
         self._should_cancel = False
+        self._process_events: Optional[Callable[[], None]] = None
 
         # Cache settings
         self.enable_cache = enable_cache
-        self.cache_manager = M3UCacheManager(cache_dir) if enable_cache else None
+        self.cache_manager = cache_manager or (
+            M3UCacheManager(cache_dir) if enable_cache else None
+        )
 
         # Performance optimization settings
         self.chunk_size = 8192 * 4  # 32KB chunks for better I/O performance
@@ -27,20 +40,22 @@ class M3UParser:
         )
         self.batch_size = 500  # Process channels in batches for memory efficiency
 
-    def cancel_parsing(self):
+    def cancel_parsing(self) -> None:
         """Cancel the current parsing operation."""
         self._should_cancel = True
 
-    def parse_m3u_from_file(self, filepath):
+    def parse_m3u_from_file(
+        self, filepath: str
+    ) -> Tuple[List[Dict[str, str]], Dict[str, List[Dict[str, str]]]]:
         """
         Parses an M3U file from the given filepath with progress reporting and intelligent caching.
 
         Args:
-            filepath (str): The path to the M3U file.
+            filepath: The path to the M3U file.
 
         Returns:
-            tuple: A tuple containing (list of channels, dict of categories).
-                   Returns ([], {}) if parsing fails or file not found.
+            A tuple containing (list of channels, dict of categories).
+            Returns ([], {}) if parsing fails or file not found.
         """
         self.channels = []
         self.categories = {}
@@ -103,22 +118,34 @@ class M3UParser:
             print(f"An error occurred while parsing the file: {e}")
             return [], {}
 
-    def set_process_events_callback(self, callback):
+    def set_process_events_callback(self, callback: Callable[[], None]) -> None:
         """Set a callback for processing Qt events during parsing."""
         self._process_events = callback
 
-    def parse_m3u_from_content(self, content_lines):
+    def parse_m3u_from_content(
+        self,
+        content_lines: List[str],
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+    ) -> Tuple[List[Dict[str, str]], Dict[str, List[Dict[str, str]]]]:
         """
         Parses M3U content directly from a list of lines.
 
         Args:
-            content_lines (list): A list of strings, where each string is a line from the M3U content.
+            content_lines: A list of strings, where each string is a line from the M3U content.
+            progress_callback: Optional callback for progress reporting.
 
         Returns:
-            tuple: A tuple containing (list of channels, dict of categories).
+            A tuple containing (list of channels, dict of categories).
         """
         self.channels = []
         self.categories = {}
+        # Use provided progress callback or instance callback
+        if progress_callback:
+            old_callback = self.progress_callback
+            self.progress_callback = progress_callback
+            result = self._parse_content(content_lines)
+            self.progress_callback = old_callback
+            return result
         return self._parse_content(content_lines)
 
     def _parse_content_with_progress(self, file_obj, file_size):
