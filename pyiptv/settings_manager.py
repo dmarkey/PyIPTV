@@ -35,6 +35,12 @@ class SettingsManager:
         "recording_enabled": True,  # Enable recording functionality
         "recording_output_dir": None,  # Will be set to default recordings folder
         "recording_format": "mp4",  # Default recording format
+        # Geolocation-based subtitle settings
+        "geolocation_auto_detect": True,  # Enable automatic geolocation detection
+        "geolocation_check_interval_hours": 24,  # How often to check location
+        "geolocation_auto_subtitle": True,  # Auto-select subtitles based on location
+        "manual_subtitle_languages": None,  # Manual override for subtitle languages
+        "cached_geolocation": None,  # Cached location data
         "max_search_results": 50000,  # Limit search results for performance
         "enable_channel_icons": False,  # Disable icons for large files by default
     }

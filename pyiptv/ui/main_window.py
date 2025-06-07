@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
@@ -43,6 +44,7 @@ from pyiptv.subtitle_manager import SubtitleManager
 from pyiptv.recording_manager import RecordingManager
 from pyiptv.link_validator import DeadLinkManager
 from pyiptv.auto_updater import M3UAutoSaver, PlaylistAutoUpdater
+from pyiptv.enhanced_subtitle_manager import EnhancedSubtitleManager
 
 # Get the directory containing this file
 _CURRENT_DIR = Path(__file__).parent
@@ -307,6 +309,18 @@ class MainWindow(QMainWindow):
 
         tools_menu.addSeparator()
 
+        # Geolocation actions
+        refresh_location_action = QAction("Refresh &Location", self)
+        refresh_location_action.setShortcut("Ctrl+L")
+        refresh_location_action.triggered.connect(self.refresh_geolocation)
+        tools_menu.addAction(refresh_location_action)
+
+        show_location_action = QAction("Show Current &Location", self)
+        show_location_action.triggered.connect(self.show_current_location)
+        tools_menu.addAction(show_location_action)
+
+        tools_menu.addSeparator()
+
         # Settings for enhanced features
         enhanced_settings_action = QAction("Enhanced &Features Settings...", self)
         enhanced_settings_action.triggered.connect(self.show_enhanced_settings)
@@ -499,7 +513,7 @@ class MainWindow(QMainWindow):
         print("Subtitle system initialized successfully")
 
     def init_enhanced_features(self):
-        """Initialize enhanced features: recording, dead link detection, auto-updates."""
+        """Initialize enhanced features: recording, dead link detection, auto-updates, geolocation."""
         # Initialize recording manager
         self.recording_manager = RecordingManager(self.settings_manager)
 
@@ -519,6 +533,12 @@ class MainWindow(QMainWindow):
         self.playlist_auto_updater.update_started.connect(self.on_playlist_update_started)
         self.playlist_auto_updater.update_completed.connect(self.on_playlist_update_completed)
         self.playlist_auto_updater.update_failed.connect(self.on_playlist_update_failed)
+
+        # Initialize enhanced subtitle manager with geolocation
+        self.enhanced_subtitle_manager = EnhancedSubtitleManager(self.settings_manager, self.subtitle_manager)
+        self.enhanced_subtitle_manager.subtitle_tracks_detected.connect(self.on_subtitle_tracks_detected)
+        self.enhanced_subtitle_manager.auto_track_selected.connect(self.on_auto_subtitle_selected)
+        self.enhanced_subtitle_manager.geolocation_status_changed.connect(self.on_geolocation_status_changed)
 
         print("Enhanced features initialized successfully")
 
@@ -1858,6 +1878,9 @@ streaming live television content from M3U playlists.</p>
             for session_id in list(self.recording_manager.active_sessions.keys()):
                 self.recording_manager.stop_recording(session_id)
 
+        if hasattr(self, "enhanced_subtitle_manager"):
+            self.enhanced_subtitle_manager.cleanup()
+
         # Stop and cleanup player
         if hasattr(self, "player") and self.player:
             self.player.stop()
@@ -2113,6 +2136,26 @@ streaming live television content from M3U playlists.</p>
         self.status_manager.show_info("Starting link validation...")
         self.dead_link_manager.validate_channels(self.all_channels_data)
 
+    # Geolocation-based Subtitle Callbacks
+    def on_subtitle_tracks_detected(self, tracks):
+        """Handle detection of subtitle tracks."""
+        if tracks:
+            track_count = len(tracks)
+            self.status_manager.show_info(f"Detected {track_count} subtitle tracks")
+
+            # Update subtitle control widget with available tracks
+            if hasattr(self, 'subtitle_control'):
+                # This would update the subtitle track selector
+                pass
+
+    def on_auto_subtitle_selected(self, track_index, reason):
+        """Handle automatic subtitle track selection."""
+        self.status_manager.show_success(f"Subtitle: {reason}")
+
+    def on_geolocation_status_changed(self, status_message):
+        """Handle geolocation status changes."""
+        self.status_manager.show_info(status_message)
+
     def update_current_playlist(self):
         """Manually trigger update of current playlist."""
         if not self.current_m3u_path:
@@ -2186,13 +2229,36 @@ streaming live television content from M3U playlists.</p>
 
         layout.addWidget(autoupdate_group)
 
+        # Geolocation group
+        geolocation_group = QGroupBox("Geolocation-based Subtitles")
+        geolocation_layout = QFormLayout(geolocation_group)
+
+        geolocation_enabled_checkbox = QCheckBox()
+        geo_auto_detect = self.settings_manager.get_setting("geolocation_auto_detect")
+        geolocation_enabled_checkbox.setChecked(geo_auto_detect if geo_auto_detect is not None else True)
+        geolocation_layout.addRow("Enable geolocation detection:", geolocation_enabled_checkbox)
+
+        auto_subtitle_checkbox = QCheckBox()
+        auto_subtitle = self.settings_manager.get_setting("geolocation_auto_subtitle")
+        auto_subtitle_checkbox.setChecked(auto_subtitle if auto_subtitle is not None else True)
+        geolocation_layout.addRow("Auto-select subtitles by location:", auto_subtitle_checkbox)
+
+        geolocation_interval = QSpinBox()
+        geolocation_interval.setRange(1, 168)  # 1 hour to 1 week
+        geo_interval = self.settings_manager.get_setting("geolocation_check_interval_hours")
+        geolocation_interval.setValue(geo_interval if geo_interval is not None else 24)
+        geolocation_layout.addRow("Location check interval (hours):", geolocation_interval)
+
+        layout.addWidget(geolocation_group)
+
         # Buttons
         button_layout = QHBoxLayout()
 
         save_button = QPushButton("Save")
         save_button.clicked.connect(lambda: self._save_enhanced_settings(
             dialog, autosave_checkbox, deadlink_checkbox, deadlink_interval,
-            deadlink_timeout, auto_remove_checkbox, autoupdate_checkbox, update_interval
+            deadlink_timeout, auto_remove_checkbox, autoupdate_checkbox, update_interval,
+            geolocation_enabled_checkbox, auto_subtitle_checkbox, geolocation_interval
         ))
 
         cancel_button = QPushButton("Cancel")
@@ -2206,7 +2272,8 @@ streaming live television content from M3U playlists.</p>
 
     def _save_enhanced_settings(self, dialog, autosave_checkbox, deadlink_checkbox,
                               deadlink_interval, deadlink_timeout, auto_remove_checkbox,
-                              autoupdate_checkbox, update_interval):
+                              autoupdate_checkbox, update_interval, geolocation_enabled_checkbox,
+                              auto_subtitle_checkbox, geolocation_interval):
         """Save enhanced features settings."""
         # Save settings
         self.settings_manager.set_setting("auto_save_m3u", autosave_checkbox.isChecked())
@@ -2217,6 +2284,11 @@ streaming live television content from M3U playlists.</p>
         self.settings_manager.set_setting("auto_update_playlists", autoupdate_checkbox.isChecked())
         self.settings_manager.set_setting("auto_update_interval_hours", update_interval.value())
 
+        # Save geolocation settings
+        self.settings_manager.set_setting("geolocation_auto_detect", geolocation_enabled_checkbox.isChecked())
+        self.settings_manager.set_setting("geolocation_auto_subtitle", auto_subtitle_checkbox.isChecked())
+        self.settings_manager.set_setting("geolocation_check_interval_hours", geolocation_interval.value())
+
         # Restart enhanced features with new settings
         if hasattr(self, "dead_link_manager"):
             self.dead_link_manager.setup_auto_checking()
@@ -2224,8 +2296,88 @@ streaming live television content from M3U playlists.</p>
         if hasattr(self, "playlist_auto_updater"):
             self.playlist_auto_updater.setup_auto_updates()
 
+        if hasattr(self, "enhanced_subtitle_manager"):
+            self.enhanced_subtitle_manager.geolocation_manager.set_auto_detection_enabled(
+                geolocation_enabled_checkbox.isChecked()
+            )
+            self.enhanced_subtitle_manager.set_auto_selection_enabled(
+                auto_subtitle_checkbox.isChecked()
+            )
+
         self.status_manager.show_success("Enhanced features settings saved")
         dialog.accept()
+
+    def refresh_geolocation(self):
+        """Manually refresh geolocation."""
+        if hasattr(self, 'enhanced_subtitle_manager'):
+            self.enhanced_subtitle_manager.refresh_location()
+            self.status_manager.show_info("Refreshing location...")
+        else:
+            self.status_manager.show_warning("Geolocation not available")
+
+    def show_current_location(self):
+        """Show current location information."""
+        if not hasattr(self, 'enhanced_subtitle_manager'):
+            self.status_manager.show_warning("Geolocation not available")
+            return
+
+        location = self.enhanced_subtitle_manager.get_location_info()
+        preferred_langs = self.enhanced_subtitle_manager.get_preferred_languages()
+
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Current Location & Subtitle Preferences")
+        dialog.setModal(True)
+        dialog.resize(400, 300)
+
+        layout = QVBoxLayout(dialog)
+
+        if location and location.is_valid:
+            # Location information
+            location_info = QLabel(f"""
+<h3>📍 Current Location</h3>
+<b>Country:</b> {location.country_name} ({location.country_code})<br>
+<b>City:</b> {location.city}<br>
+<b>Region:</b> {location.region}<br>
+<b>Timezone:</b> {location.timezone}<br>
+<b>Coordinates:</b> {location.latitude:.4f}, {location.longitude:.4f}<br>
+<b>Last Updated:</b> {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(location.timestamp))}
+            """)
+            location_info.setWordWrap(True)
+            layout.addWidget(location_info)
+        else:
+            no_location = QLabel("<h3>📍 Location</h3>Location not detected or unavailable.")
+            layout.addWidget(no_location)
+
+        # Preferred languages
+        if preferred_langs:
+            from pyiptv.geolocation_manager import CountryLanguageMapper
+            lang_names = [CountryLanguageMapper.get_language_name(lang) for lang in preferred_langs]
+            lang_text = ", ".join(lang_names)
+
+            lang_info = QLabel(f"""
+<h3>🌐 Preferred Subtitle Languages</h3>
+<b>Languages:</b> {lang_text}<br>
+<b>Codes:</b> {', '.join(preferred_langs)}
+            """)
+            lang_info.setWordWrap(True)
+            layout.addWidget(lang_info)
+
+        # Auto-selection status
+        auto_enabled = self.enhanced_subtitle_manager.is_auto_selection_enabled()
+        auto_status = QLabel(f"""
+<h3>⚙️ Auto-Selection</h3>
+<b>Status:</b> {'✅ Enabled' if auto_enabled else '❌ Disabled'}
+        """)
+        layout.addWidget(auto_status)
+
+        # Close button
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(dialog.accept)
+        layout.addWidget(close_button)
+
+        dialog.exec()
 
 
 if __name__ == "__main__":
