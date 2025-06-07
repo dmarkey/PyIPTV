@@ -24,6 +24,7 @@ class EnhancedControlBar(QWidget):
     volume_changed = Signal(int)
     seek_requested = Signal(float)  # 0.0 to 1.0
     audio_track_changed = Signal(int)  # Track index
+    subtitle_track_changed = Signal(str)  # Track ID
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -144,6 +145,25 @@ class EnhancedControlBar(QWidget):
         audio_layout.addWidget(self.audio_track_combo)
 
         controls_layout.addLayout(audio_layout)
+
+        # Subtitle track selector (compact)
+        subtitle_layout = QHBoxLayout()
+        subtitle_layout.setSpacing(5)
+
+        self.subtitle_icon = QLabel("📝")
+        self.subtitle_icon.setToolTip("Subtitle Track")
+
+        self.subtitle_track_combo = QComboBox()
+        self.subtitle_track_combo.setMaximumWidth(120)
+        self.subtitle_track_combo.setToolTip("Select subtitle track")
+        self.subtitle_track_combo.addItem("No tracks")
+        self.subtitle_track_combo.setEnabled(False)
+        self.subtitle_track_combo.currentIndexChanged.connect(self._on_subtitle_track_changed)
+
+        subtitle_layout.addWidget(self.subtitle_icon)
+        subtitle_layout.addWidget(self.subtitle_track_combo)
+
+        controls_layout.addLayout(subtitle_layout)
 
         # Fullscreen button
         self.fullscreen_btn = QPushButton()
@@ -295,6 +315,10 @@ class EnhancedControlBar(QWidget):
         """Set the media player instance."""
         self.media_player = media_player
 
+    def set_subtitle_manager(self, subtitle_manager):
+        """Set the subtitle manager instance."""
+        self.subtitle_manager = subtitle_manager
+
     def _on_audio_track_changed(self, index):
         """Handle audio track selection change."""
         if not self.media_player or not self.audio_track_combo.isEnabled():
@@ -305,6 +329,15 @@ class EnhancedControlBar(QWidget):
             success = self.media_player.set_audio_track(track_index)
             if success:
                 self.audio_track_changed.emit(track_index)
+
+    def _on_subtitle_track_changed(self, index):
+        """Handle subtitle track selection change."""
+        if not hasattr(self, 'subtitle_manager') or not self.subtitle_track_combo.isEnabled():
+            return
+
+        track_id = self.subtitle_track_combo.itemData(index)
+        if track_id is not None:
+            self.subtitle_track_changed.emit(track_id)
 
     def refresh_audio_tracks(self):
         """Refresh the list of available audio tracks."""
@@ -361,18 +394,74 @@ class EnhancedControlBar(QWidget):
         finally:
             self.audio_track_combo.blockSignals(False)
 
+    def refresh_subtitle_tracks(self):
+        """Refresh the list of available subtitle tracks."""
+        if not hasattr(self, 'subtitle_manager'):
+            self.subtitle_track_combo.clear()
+            self.subtitle_track_combo.addItem("No tracks")
+            self.subtitle_track_combo.setEnabled(False)
+            return
+
+        try:
+            # Clear existing items
+            self.subtitle_track_combo.blockSignals(True)
+            self.subtitle_track_combo.clear()
+
+            # Get available subtitle tracks
+            subtitle_tracks = self.subtitle_manager.get_available_tracks()
+
+            if not subtitle_tracks:
+                self.subtitle_track_combo.addItem("No tracks")
+                self.subtitle_track_combo.setEnabled(False)
+            else:
+                self.subtitle_track_combo.setEnabled(True)
+
+                # Add "None" option to disable subtitles
+                self.subtitle_track_combo.addItem("None", "")
+
+                # Add tracks to combo box
+                for track in subtitle_tracks:
+                    track_text = track.display_name
+                    self.subtitle_track_combo.addItem(track_text, track.id)
+
+                # Try to select current active track
+                current_track = self.subtitle_manager.current_track
+                if current_track:
+                    for i in range(self.subtitle_track_combo.count()):
+                        if self.subtitle_track_combo.itemData(i) == current_track.id:
+                            self.subtitle_track_combo.setCurrentIndex(i)
+                            break
+
+        except Exception as e:
+            print(f"Error refreshing subtitle tracks: {e}")
+            self.subtitle_track_combo.clear()
+            self.subtitle_track_combo.addItem("Error")
+            self.subtitle_track_combo.setEnabled(False)
+        finally:
+            self.subtitle_track_combo.blockSignals(False)
+
     def on_media_loaded(self):
         """Call this when new media is loaded."""
-        # Immediately reset the dropdown
+        # Immediately reset the audio dropdown
         self.audio_track_combo.clear()
         self.audio_track_combo.addItem("Loading tracks...")
         self.audio_track_combo.setEnabled(False)
 
+        # Immediately reset the subtitle dropdown
+        self.subtitle_track_combo.clear()
+        self.subtitle_track_combo.addItem("Loading tracks...")
+        self.subtitle_track_combo.setEnabled(False)
+
         # Delay refresh to allow media to fully load
         QTimer.singleShot(2000, self.refresh_audio_tracks)
+        QTimer.singleShot(3000, self.refresh_subtitle_tracks)  # Slightly later for subtitles
 
     def on_media_stopped(self):
         """Call this when media is stopped."""
         self.audio_track_combo.clear()
         self.audio_track_combo.addItem("No tracks")
         self.audio_track_combo.setEnabled(False)
+
+        self.subtitle_track_combo.clear()
+        self.subtitle_track_combo.addItem("No tracks")
+        self.subtitle_track_combo.setEnabled(False)

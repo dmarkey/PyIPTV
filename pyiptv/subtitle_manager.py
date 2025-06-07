@@ -376,13 +376,16 @@ class SubtitleManager(QObject):
         """
         import subprocess
         import json
+        from .ffmpeg_manager import get_ffprobe_command
 
         embedded_tracks = []
 
         try:
+            # Get the appropriate ffprobe command (system or bundled)
+            ffprobe_cmd = get_ffprobe_command()
+
             # Use ffprobe to get stream information
-            cmd = [
-                "ffprobe",
+            cmd = ffprobe_cmd + [
                 "-v", "quiet",
                 "-print_format", "json",
                 "-show_streams",

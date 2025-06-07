@@ -208,6 +208,9 @@ class MainWindow(QMainWindow):
         self.init_subtitles()
         self.setup_shortcuts()
 
+        # Check and setup FFmpeg if needed
+        self.check_ffmpeg_setup()
+
         self.load_initial_m3u()
         self.restore_geometry()
 
@@ -253,6 +256,12 @@ class MainWindow(QMainWindow):
         )
         settings_action.triggered.connect(self.open_settings_dialog)
         file_menu.addAction(settings_action)
+
+        file_menu.addSeparator()
+
+        ffmpeg_setup_action = QAction("Setup &FFmpeg...", self)
+        ffmpeg_setup_action.triggered.connect(self.manual_ffmpeg_setup)
+        file_menu.addAction(ffmpeg_setup_action)
 
         file_menu.addSeparator()
 
@@ -368,6 +377,7 @@ class MainWindow(QMainWindow):
         self.control_bar.volume_changed.connect(self.on_volume_changed)
         self.control_bar.seek_requested.connect(self.on_seek_requested)
         self.control_bar.audio_track_changed.connect(self.on_audio_track_changed)
+        self.control_bar.subtitle_track_changed.connect(self.on_subtitle_track_changed)
 
         self.right_layout.addWidget(self.control_bar)
 
@@ -430,6 +440,9 @@ class MainWindow(QMainWindow):
         # Connect subtitle control signals
         self.subtitle_control.track_changed.connect(self._on_subtitle_track_changed)
 
+        # Connect control bar subtitle track selector to subtitle manager
+        self.control_bar.set_subtitle_manager(self.subtitle_manager)
+
         # Add subtitle control to the right layout (after control bar)
         # We'll add it dynamically when toggled
 
@@ -450,6 +463,72 @@ class MainWindow(QMainWindow):
             self.player.position_changed.connect(self._on_position_changed_for_subtitles)
 
         print("Subtitle system initialized successfully")
+
+    def check_ffmpeg_setup(self):
+        """Check if FFmpeg is available and setup if needed."""
+        from pyiptv.ffmpeg_manager import ffmpeg_manager
+
+        # Check if FFmpeg is already available
+        if ffmpeg_manager.check_system_ffmpeg() or ffmpeg_manager.is_ffmpeg_available():
+            print("✅ FFmpeg is available")
+            return
+
+        # Check if user has previously skipped setup
+        try:
+            skip_ffmpeg_setup = self.settings_manager.get_setting("skip_ffmpeg_setup")
+        except KeyError:
+            skip_ffmpeg_setup = False
+
+        if skip_ffmpeg_setup:
+            print("⚠️ FFmpeg setup was skipped - limited subtitle features")
+            return
+
+        # Show setup dialog
+        print("🔧 FFmpeg not found - showing setup dialog")
+        QTimer.singleShot(1000, self._show_ffmpeg_setup_dialog)  # Delay to let UI load
+
+    def _show_ffmpeg_setup_dialog(self):
+        """Show the FFmpeg setup dialog."""
+        from pyiptv.ui.components.ffmpeg_setup_dialog import show_ffmpeg_setup_dialog
+
+        try:
+            setup_completed = show_ffmpeg_setup_dialog(self)
+
+            if not setup_completed:
+                # User skipped setup
+                self.settings_manager.set_setting("skip_ffmpeg_setup", True)
+                self.status_manager.show_warning(
+                    "FFmpeg setup skipped - subtitle features will be limited"
+                )
+            else:
+                # Setup completed successfully
+                self.status_manager.show_success(
+                    "FFmpeg setup complete - all subtitle features available!"
+                )
+
+        except Exception as e:
+            print(f"Error in FFmpeg setup: {e}")
+            self.status_manager.show_error(f"FFmpeg setup failed: {str(e)}")
+
+    def manual_ffmpeg_setup(self):
+        """Manually run FFmpeg setup."""
+        from pyiptv.ui.components.ffmpeg_setup_dialog import show_ffmpeg_setup_dialog
+
+        try:
+            setup_completed = show_ffmpeg_setup_dialog(self)
+
+            if setup_completed:
+                # Reset the skip setting if setup was completed
+                self.settings_manager.set_setting("skip_ffmpeg_setup", False)
+                self.status_manager.show_success(
+                    "FFmpeg setup complete - all subtitle features available!"
+                )
+            else:
+                self.status_manager.show_info("FFmpeg setup cancelled")
+
+        except Exception as e:
+            print(f"Error in manual FFmpeg setup: {e}")
+            self.status_manager.show_error(f"FFmpeg setup failed: {str(e)}")
 
     def init_simplified_ux_system(self):
         """Initialize the simplified UX system with just status bar."""
@@ -882,7 +961,7 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'channel_info_bar'):
                 self.channel_info_bar.update_channel_info(channel_info)
 
-            # Detect embedded subtitle tracks for the new media
+            # Detect embedded subtitle tracks for the new media and auto-activate
             if hasattr(self, 'subtitle_manager'):
                 try:
                     embedded_tracks = self.subtitle_manager.detect_embedded_tracks(url)
@@ -891,6 +970,22 @@ class MainWindow(QMainWindow):
                             f"Detected {len(embedded_tracks)} embedded subtitle tracks",
                             timeout=3000
                         )
+
+                        # Auto-activate the first available subtitle track
+                        if embedded_tracks:
+                            first_track = embedded_tracks[0]
+                            success = self.subtitle_manager.set_embedded_track(first_track.id)
+                            if success:
+                                self.status_manager.show_info(
+                                    f"Auto-activated: {first_track.display_name}",
+                                    timeout=2000
+                                )
+                                self._activate_embedded_subtitle_in_player(first_track)
+
+                        # Refresh subtitle tracks in control bar
+                        if hasattr(self.control_bar, 'refresh_subtitle_tracks'):
+                            QTimer.singleShot(3500, self.control_bar.refresh_subtitle_tracks)
+
                 except Exception as e:
                     print(f"Error detecting embedded tracks: {e}")
 
@@ -1126,18 +1221,56 @@ class MainWindow(QMainWindow):
     def _activate_embedded_subtitle_in_player(self, track):
         """Activate embedded subtitle track in the media player."""
         if hasattr(self.player, 'set_subtitle_track') and track.stream_index is not None:
-            # If the player supports subtitle track selection
+            # Get available subtitle tracks from the player
             try:
-                self.player.set_subtitle_track(track.stream_index)
-                print(f"Activated embedded subtitle track {track.stream_index} ({track.language})")
+                player_tracks = self.player.get_subtitle_tracks()
+                print(f"Player has {len(player_tracks)} subtitle tracks available")
+
+                # Try to find the matching track by language or index
+                player_track_index = -1
+
+                # Method 1: Try to match by language
+                for i, player_track in enumerate(player_tracks):
+                    player_lang = player_track.get('language', '').lower()
+                    track_lang = track.language.lower()
+
+                    if player_lang == track_lang or player_lang.startswith(track_lang[:3]):
+                        player_track_index = i
+                        print(f"Found matching track by language: {track_lang} -> player index {i}")
+                        break
+
+                # Method 2: If no language match, try direct stream index mapping
+                if player_track_index == -1:
+                    # FFprobe stream index might not directly map to player track index
+                    # Try to use the stream index as-is first
+                    if 0 <= track.stream_index < len(player_tracks):
+                        player_track_index = track.stream_index
+                        print(f"Using direct stream index mapping: {track.stream_index}")
+                    elif len(player_tracks) > 0:
+                        # Fallback: use the first available track
+                        player_track_index = 0
+                        print(f"Fallback: using first available track (index 0)")
+
+                # Activate the track
+                if player_track_index >= 0:
+                    success = self.player.set_subtitle_track(player_track_index)
+                    if success:
+                        print(f"✅ Activated subtitle track {player_track_index} ({track.language})")
+                        self.status_manager.show_success(f"Activated: {track.display_name}")
+                    else:
+                        print(f"❌ Failed to activate subtitle track {player_track_index}")
+                        self.status_manager.show_error("Failed to activate subtitle track")
+                else:
+                    print("❌ No suitable subtitle track found in player")
+                    self.status_manager.show_warning("No matching subtitle track found in player")
+
             except Exception as e:
                 print(f"Error activating embedded subtitle track: {e}")
-                self.status_manager.show_warning("Player doesn't support embedded subtitle switching")
+                self.status_manager.show_error(f"Error activating subtitles: {str(e)}")
         else:
             # Fallback: show info about the limitation
-            self.status_manager.show_info(
-                f"Selected {track.display_name} - Note: Embedded subtitle switching requires player support",
-                timeout=4000
+            self.status_manager.show_warning(
+                f"Selected {track.display_name} - Player doesn't support embedded subtitle switching"
             )
 
     def _on_position_changed_for_subtitles(self, position_ms):
@@ -1320,6 +1453,39 @@ streaming live television content from M3U playlists.</p>
         self.status_manager.show_info(
             f"Switched to audio track {track_index + 1}", timeout=3000
         )
+
+    def on_subtitle_track_changed(self, track_id):
+        """Handle subtitle track changes from the subtitle track selector."""
+        if not track_id:
+            # "None" selected - disable subtitles
+            if hasattr(self, 'subtitle_manager'):
+                self.subtitle_manager.disable_subtitles()
+                self.status_manager.show_info("Subtitles disabled", timeout=1500)
+            return
+
+        if hasattr(self, 'subtitle_manager'):
+            track = self.subtitle_manager.tracks.get(track_id)
+            if track:
+                if track.is_embedded:
+                    # Handle embedded track
+                    success = self.subtitle_manager.set_embedded_track(track_id)
+                    if success:
+                        self.status_manager.show_info(f"Activated: {track.display_name}", timeout=2000)
+                        # For embedded tracks, we need to tell the media player to use this subtitle stream
+                        self._activate_embedded_subtitle_in_player(track)
+                    else:
+                        self.status_manager.show_error("Failed to activate embedded subtitle track")
+                else:
+                    # Handle external track
+                    success = self.subtitle_manager.set_active_track(track_id)
+                    if success:
+                        self.status_manager.show_info(f"Loaded: {track.display_name}", timeout=2000)
+                    else:
+                        self.status_manager.show_error("Failed to load subtitle track")
+            else:
+                self.status_manager.show_error("Subtitle track not found")
+        else:
+            self.status_manager.show_info("Subtitle system not available", timeout=2000)
 
     def show_loading_state(self, show):
         """Show/hide loading state (can be enhanced with spinner)."""
