@@ -428,6 +428,7 @@ class MainWindow(QMainWindow):
         self.control_bar = EnhancedControlBar()
         self.control_bar.play_pause_clicked.connect(self.toggle_play_pause)
         self.control_bar.stop_clicked.connect(self.stop_playback)
+        self.control_bar.record_clicked.connect(self.toggle_recording)
         self.control_bar.fullscreen_clicked.connect(self.toggle_fullscreen)
         self.control_bar.volume_changed.connect(self.on_volume_changed)
         self.control_bar.seek_requested.connect(self.on_seek_requested)
@@ -551,6 +552,9 @@ class MainWindow(QMainWindow):
         self.enhanced_subtitle_manager.geolocation_status_changed.connect(self.on_geolocation_status_changed)
 
         print("Enhanced features initialized successfully")
+
+        # Initialize recording button state
+        self.update_recording_status_indicator()
 
     def check_ffmpeg_setup(self):
         """Check if FFmpeg is available and setup if needed."""
@@ -2224,18 +2228,66 @@ streaming live television content from M3U playlists.</p>
             self.recording_status_widget.remove_recording(session_id)
         self.status_manager.show_error(f"Recording failed: {error_message}")
 
+    def toggle_recording(self):
+        """Toggle recording for the current channel."""
+        # Check if we have any active recordings for the current channel
+        current_channel = self.channel_list_widget.get_selected_channel()
+        if not current_channel:
+            self.status_manager.show_error("No channel selected")
+            return
+
+        channel_name = current_channel.get("name", "Unknown")
+        stream_url = current_channel.get("url")
+
+        if not stream_url:
+            self.status_manager.show_error("No stream URL available")
+            return
+
+        # Check if this channel is already being recorded
+        if hasattr(self, 'recording_manager'):
+            active_sessions = self.recording_manager.get_active_sessions()
+            current_session = None
+
+            for session in active_sessions:
+                if session.stream_url == stream_url:
+                    current_session = session
+                    break
+
+            if current_session:
+                # Stop the current recording
+                success = self.recording_manager.stop_recording(current_session.id)
+                if success:
+                    self.status_manager.show_success(f"Stopped recording: {channel_name}")
+                else:
+                    self.status_manager.show_error("Failed to stop recording")
+            else:
+                # Start new recording
+                session_id = self.recording_manager.start_recording(channel_name, stream_url)
+                if session_id:
+                    self.status_manager.show_success(f"Started recording: {channel_name}")
+                else:
+                    self.status_manager.show_error("Failed to start recording")
+        else:
+            self.status_manager.show_error("Recording not available")
+
     def update_recording_status_indicator(self):
-        """Update the recording status indicator in the status bar."""
+        """Update the recording status indicator in the status bar and control bar."""
         if not hasattr(self, 'recording_status_widget') or not hasattr(self, 'status_manager'):
             return
 
         active_count = self.recording_status_widget.get_active_count()
 
+        # Update status bar
         if active_count > 0:
             status_text = f"🔴 Recording ({active_count})"
             self.status_manager.show_persistent_info(status_text)
         else:
             self.status_manager.clear_persistent_info()
+
+        # Update control bar record button
+        if hasattr(self, 'control_bar'):
+            is_recording = active_count > 0
+            self.control_bar.update_recording_state(is_recording, active_count)
 
     def update_current_playlist(self):
         """Manually trigger update of current playlist."""

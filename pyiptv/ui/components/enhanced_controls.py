@@ -20,6 +20,7 @@ class EnhancedControlBar(QWidget):
     # Signals
     play_pause_clicked = Signal()
     stop_clicked = Signal()
+    record_clicked = Signal()  # New recording signal
     fullscreen_clicked = Signal()
     volume_changed = Signal(int)
     seek_requested = Signal(float)  # 0.0 to 1.0
@@ -97,8 +98,38 @@ class EnhancedControlBar(QWidget):
         self.stop_btn.setToolTip("Stop")
         self.stop_btn.clicked.connect(self.stop_clicked)
 
+        # Record button
+        self.record_btn = QPushButton("🔴")
+        self.record_btn.setToolTip("Start Recording (Ctrl+R)")
+        self.record_btn.setMaximumWidth(40)
+        self.record_btn.clicked.connect(self.record_clicked)
+        self.record_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 16px;
+                font-weight: bold;
+                border: 2px solid #dc3545;
+                border-radius: 6px;
+                background-color: transparent;
+                color: #dc3545;
+                padding: 4px;
+            }
+            QPushButton:hover {
+                background-color: #dc3545;
+                color: white;
+            }
+            QPushButton:pressed {
+                background-color: #c82333;
+            }
+            QPushButton:disabled {
+                color: #6c757d;
+                border-color: #6c757d;
+                background-color: transparent;
+            }
+        """)
+
         controls_layout.addWidget(self.play_pause_btn)
         controls_layout.addWidget(self.stop_btn)
+        controls_layout.addWidget(self.record_btn)
 
         # Spacer
         controls_layout.addStretch()
@@ -201,6 +232,63 @@ class EnhancedControlBar(QWidget):
         else:
             self.fullscreen_btn.setIcon(QIcon.fromTheme("view-fullscreen"))
             self.fullscreen_btn.setToolTip("Fullscreen (F11)")
+
+    def update_recording_state(self, is_recording, recording_count=0):
+        """Update the record button state."""
+        if is_recording:
+            if recording_count > 1:
+                self.record_btn.setText(f"🔴{recording_count}")
+                self.record_btn.setToolTip(f"Recording {recording_count} channels (Click to stop current)")
+            else:
+                self.record_btn.setText("⏹️")
+                self.record_btn.setToolTip("Stop Recording (Ctrl+R)")
+
+            # Update style for active recording
+            self.record_btn.setStyleSheet("""
+                QPushButton {
+                    font-size: 16px;
+                    font-weight: bold;
+                    border: 2px solid #dc3545;
+                    border-radius: 6px;
+                    background-color: #dc3545;
+                    color: white;
+                    padding: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #c82333;
+                }
+                QPushButton:pressed {
+                    background-color: #a71e2a;
+                }
+            """)
+        else:
+            self.record_btn.setText("🔴")
+            self.record_btn.setToolTip("Start Recording (Ctrl+R)")
+
+            # Reset to default style
+            self.record_btn.setStyleSheet("""
+                QPushButton {
+                    font-size: 16px;
+                    font-weight: bold;
+                    border: 2px solid #dc3545;
+                    border-radius: 6px;
+                    background-color: transparent;
+                    color: #dc3545;
+                    padding: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #dc3545;
+                    color: white;
+                }
+                QPushButton:pressed {
+                    background-color: #c82333;
+                }
+                QPushButton:disabled {
+                    color: #6c757d;
+                    border-color: #6c757d;
+                    background-color: transparent;
+                }
+            """)
 
     def update_time(self, position, duration):
         """Update time display and seek bar."""
