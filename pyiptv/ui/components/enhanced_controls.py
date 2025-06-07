@@ -103,6 +103,7 @@ class EnhancedControlBar(QWidget):
         self.record_btn.setToolTip("Start Recording (Ctrl+R)")
         self.record_btn.setMinimumWidth(60)
         self.record_btn.setMaximumWidth(80)
+        self.record_btn.setMinimumHeight(30)
         self.record_btn.clicked.connect(self.record_clicked)
         self.record_btn.setStyleSheet("""
             QPushButton {
@@ -133,8 +134,9 @@ class EnhancedControlBar(QWidget):
         controls_layout.addWidget(self.stop_btn)
         controls_layout.addWidget(self.record_btn)
 
-        # Debug: Verify record button is created
-        print(f"Record button created: {self.record_btn.text()}, visible: {self.record_btn.isVisible()}")
+        # Ensure record button is visible
+        self.record_btn.setVisible(True)
+        self.record_btn.show()
 
         # Spacer
         controls_layout.addStretch()
