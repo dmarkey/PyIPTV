@@ -29,6 +29,7 @@
 - 🔗 **Dead Link Detection** - Automatic validation and removal of broken streams
 - 🔄 **Auto-Updates** - Automatic playlist refresh for URL-based sources
 - 💾 **Auto-Save** - Automatic M3U file saving with backup system
+- 🌍 **Geolocation Subtitles** - Auto-select subtitle language based on your location
 - ⚙️ **Advanced Settings** - Comprehensive configuration for all enhanced features
 
 ### User Experience
@@ -154,6 +155,43 @@ Automatically save playlist modifications:
 
 **Backup Location:** `<playlist_directory>/backups/`
 
+### 🌍 Geolocation-based Subtitle Selection
+
+Automatically select the best subtitle language based on your geographic location:
+
+- **Automatic Detection**: Uses IP geolocation to determine your country
+- **Smart Language Mapping**: 100+ countries with preferred language combinations
+- **Intelligent Selection**: Advanced scoring algorithm for optimal subtitle choice
+- **Manual Override**: Always maintain full control over subtitle selection
+- **Privacy-Friendly**: Location data cached locally, minimal external requests
+
+**How it Works:**
+1. **Location Detection**: Automatically detects your country via IP geolocation
+2. **Language Mapping**: Maps your country to preferred subtitle languages
+3. **Smart Selection**: Scores available subtitle tracks based on preferences
+4. **Fallback System**: Falls back to default or English if preferred languages unavailable
+
+**Country Examples:**
+- 🇹🇳 **Tunisia** → Arabic, French
+- 🇫🇷 **France** → French, English
+- 🇩🇪 **Germany** → German, English
+- 🇸🇦 **Saudi Arabia** → Arabic, English
+- 🇺🇸 **United States** → English, Spanish
+- 🇨🇳 **China** → Chinese, English
+- 🇯🇵 **Japan** → Japanese, English
+- 🇪🇸 **Spain** → Spanish, English
+
+**Configuration:**
+- **Auto-Detection**: Enable/disable automatic location detection
+- **Check Interval**: How often to refresh location (default: 24 hours)
+- **Manual Override**: Set custom language preferences
+- **View Location**: See current detected location and preferences
+
+**Controls:**
+- `Ctrl+L` - Refresh location manually
+- Tools → Show Current Location - View location details
+- Tools → Enhanced Features Settings - Configure all options
+
 ## ⌨️ Keyboard Shortcuts
 
 ### Playback Controls
@@ -171,6 +209,7 @@ Automatically save playlist modifications:
 | `Ctrl+R` | Start Recording Current Channel |
 | `Ctrl+V` | Validate All Links |
 | `F5` | Update Current Playlist |
+| `Ctrl+L` | Refresh Geolocation |
 | `Ctrl+F` | Search Channels |
 | `Ctrl+Shift+F` | Search Categories |
 
