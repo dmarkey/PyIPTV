@@ -407,16 +407,53 @@ class SubtitleManager(QObject):
                 for stream in streams:
                     if stream.get("codec_type") == "subtitle":
                         # Extract language and other metadata
-                        language = stream.get("tags", {}).get("language", "unknown")
+                        tags = stream.get("tags", {})
+                        language = tags.get("language", "unknown")
+                        title = tags.get("title", "")
                         codec_name = stream.get("codec_name", "unknown")
                         stream_index = stream.get("index", 0)
+
+                        # Try to extract language from title if language tag is missing
+                        if language == "unknown" and title:
+                            title_lower = title.lower()
+                            if "arabic" in title_lower or "عربي" in title_lower:
+                                language = "ara"
+                            elif "english" in title_lower:
+                                language = "eng"
+                            elif "polish" in title_lower:
+                                language = "pol"
+                            elif "croatian" in title_lower:
+                                language = "hrv"
+                            elif "hungarian" in title_lower:
+                                language = "hun"
+                            elif "italian" in title_lower:
+                                language = "ita"
+                            elif "spanish" in title_lower:
+                                language = "spa"
+                            elif "french" in title_lower:
+                                language = "fra"
+                            elif "german" in title_lower:
+                                language = "deu"
+                            elif "russian" in title_lower:
+                                language = "rus"
+                            elif "japanese" in title_lower:
+                                language = "jpn"
+                            elif "korean" in title_lower:
+                                language = "kor"
+                            elif "chinese" in title_lower:
+                                language = "chi"
+
+                        # Normalize language code to full name
+                        language_name = self._normalize_language_code(language)
+
+                        print(f"🔍 Detected subtitle: stream {stream_index}, lang='{language}' -> '{language_name}', title='{title}'")
 
                         # Create subtitle track
                         track_id = f"embedded_{stream_index}"
                         track = SubtitleTrack(
                             id=track_id,
-                            language=self._normalize_language_code(language),
-                            title=f"Embedded {language.upper()}",
+                            language=language_name,
+                            title=f"{language_name} (Embedded)",
                             format=codec_name,
                             is_embedded=True,
                             stream_index=stream_index,

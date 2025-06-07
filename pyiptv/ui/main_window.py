@@ -1221,42 +1221,116 @@ class MainWindow(QMainWindow):
     def _activate_embedded_subtitle_in_player(self, track):
         """Activate embedded subtitle track in the media player."""
         if hasattr(self.player, 'set_subtitle_track') and track.stream_index is not None:
-            # Get available subtitle tracks from the player
             try:
+                # Get available subtitle tracks from the player
                 player_tracks = self.player.get_subtitle_tracks()
-                print(f"Player has {len(player_tracks)} subtitle tracks available")
+                print(f"\n🔍 DEBUG: Player has {len(player_tracks)} subtitle tracks available")
 
-                # Try to find the matching track by language or index
+                # Debug: Show all available tracks
+                for i, player_track in enumerate(player_tracks):
+                    player_lang = player_track.get('language', 'unknown')
+                    player_title = player_track.get('title', 'no title')
+                    print(f"  Player track {i}: {player_lang} - {player_title}")
+
+                print(f"🎯 Looking for track: {track.language} (stream index {track.stream_index})")
+
+                # Create language mapping for better matching
+                language_codes = {
+                    'ara': 'arabic', 'ar': 'arabic',
+                    'eng': 'english', 'en': 'english',
+                    'pol': 'polish', 'pl': 'polish',
+                    'hrv': 'croatian', 'hr': 'croatian',
+                    'hun': 'hungarian', 'hu': 'hungarian',
+                    'ita': 'italian', 'it': 'italian',
+                    'spa': 'spanish', 'es': 'spanish',
+                    'fra': 'french', 'fr': 'french',
+                    'deu': 'german', 'de': 'german',
+                    'rus': 'russian', 'ru': 'russian',
+                    'jpn': 'japanese', 'ja': 'japanese',
+                    'kor': 'korean', 'ko': 'korean',
+                    'chi': 'chinese', 'zh': 'chinese',
+                    'vie': 'vietnamese', 'vi': 'vietnamese',
+                    'tha': 'thai', 'th': 'thai',
+                    'tur': 'turkish', 'tr': 'turkish',
+                    'por': 'portuguese', 'pt': 'portuguese',
+                    'ron': 'romanian', 'ro': 'romanian',
+                    'swe': 'swedish', 'sv': 'swedish',
+                    'nor': 'norwegian', 'no': 'norwegian',
+                    'nld': 'dutch', 'nl': 'dutch',
+                    'msa': 'malay', 'ms': 'malay',
+                    'ind': 'indonesian', 'id': 'indonesian'
+                }
+
+                # Normalize the target language
+                target_lang = track.language.lower()
+                target_lang_full = language_codes.get(target_lang, target_lang)
+
                 player_track_index = -1
 
-                # Method 1: Try to match by language
+                # Method 1: Exact language code match
                 for i, player_track in enumerate(player_tracks):
                     player_lang = player_track.get('language', '').lower()
-                    track_lang = track.language.lower()
-
-                    if player_lang == track_lang or player_lang.startswith(track_lang[:3]):
+                    if player_lang == target_lang or player_lang == target_lang_full:
                         player_track_index = i
-                        print(f"Found matching track by language: {track_lang} -> player index {i}")
+                        print(f"✅ Exact language match: {target_lang} -> player index {i}")
                         break
 
-                # Method 2: If no language match, try direct stream index mapping
+                # Method 2: Language code prefix match (e.g., 'ara' matches 'ar')
                 if player_track_index == -1:
-                    # FFprobe stream index might not directly map to player track index
-                    # Try to use the stream index as-is first
-                    if 0 <= track.stream_index < len(player_tracks):
-                        player_track_index = track.stream_index
-                        print(f"Using direct stream index mapping: {track.stream_index}")
-                    elif len(player_tracks) > 0:
-                        # Fallback: use the first available track
-                        player_track_index = 0
-                        print(f"Fallback: using first available track (index 0)")
+                    for i, player_track in enumerate(player_tracks):
+                        player_lang = player_track.get('language', '').lower()
+                        if (len(target_lang) >= 2 and len(player_lang) >= 2 and
+                            target_lang[:2] == player_lang[:2]):
+                            player_track_index = i
+                            print(f"✅ Language prefix match: {target_lang} -> player index {i}")
+                            break
+
+                # Method 3: Title-based matching
+                if player_track_index == -1:
+                    for i, player_track in enumerate(player_tracks):
+                        player_title = player_track.get('title', '').lower()
+                        if target_lang_full in player_title or target_lang in player_title:
+                            player_track_index = i
+                            print(f"✅ Title-based match: {target_lang} -> player index {i}")
+                            break
+
+                # Method 4: Use the relative position in subtitle tracks only
+                if player_track_index == -1:
+                    # Get all subtitle tracks from ffprobe detection
+                    all_subtitle_tracks = [t for t in self.subtitle_manager.tracks.values() if t.is_embedded]
+                    all_subtitle_tracks.sort(key=lambda x: x.stream_index)
+
+                    # Find the position of our target track
+                    target_position = -1
+                    for pos, sub_track in enumerate(all_subtitle_tracks):
+                        if sub_track.id == track.id:
+                            target_position = pos
+                            break
+
+                    if 0 <= target_position < len(player_tracks):
+                        player_track_index = target_position
+                        print(f"✅ Position-based match: position {target_position} -> player index {player_track_index}")
+
+                # Method 5: Last resort - try stream index directly
+                if player_track_index == -1 and 0 <= track.stream_index < len(player_tracks):
+                    player_track_index = track.stream_index
+                    print(f"⚠️ Using direct stream index: {track.stream_index}")
 
                 # Activate the track
                 if player_track_index >= 0:
+                    print(f"🎬 Attempting to activate player track {player_track_index}")
                     success = self.player.set_subtitle_track(player_track_index)
                     if success:
-                        print(f"✅ Activated subtitle track {player_track_index} ({track.language})")
+                        # Verify the activation
+                        current_track = self.player.get_current_subtitle_track()
+                        print(f"✅ Activated subtitle track {player_track_index}, current: {current_track}")
                         self.status_manager.show_success(f"Activated: {track.display_name}")
+
+                        # Show which track was actually activated
+                        if 0 <= player_track_index < len(player_tracks):
+                            actual_track = player_tracks[player_track_index]
+                            actual_lang = actual_track.get('language', 'unknown')
+                            print(f"📺 Actually showing: {actual_lang} subtitles")
                     else:
                         print(f"❌ Failed to activate subtitle track {player_track_index}")
                         self.status_manager.show_error("Failed to activate subtitle track")
@@ -1266,6 +1340,8 @@ class MainWindow(QMainWindow):
 
             except Exception as e:
                 print(f"Error activating embedded subtitle track: {e}")
+                import traceback
+                traceback.print_exc()
                 self.status_manager.show_error(f"Error activating subtitles: {str(e)}")
         else:
             # Fallback: show info about the limitation
