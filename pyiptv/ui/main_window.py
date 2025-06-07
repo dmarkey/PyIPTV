@@ -40,6 +40,9 @@ from pyiptv.ui.components.subtitle_widget import SubtitleDisplayWidget, Subtitle
 from pyiptv.ui.playlist_manager_window import PlaylistManagerWindow
 from pyiptv.ui.themes import ModernDarkTheme, ThemeManager
 from pyiptv.subtitle_manager import SubtitleManager
+from pyiptv.recording_manager import RecordingManager
+from pyiptv.link_validator import DeadLinkManager
+from pyiptv.auto_updater import M3UAutoSaver, PlaylistAutoUpdater
 
 # Get the directory containing this file
 _CURRENT_DIR = Path(__file__).parent
@@ -206,6 +209,7 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.init_player()
         self.init_subtitles()
+        self.init_enhanced_features()
         self.setup_shortcuts()
 
         # Check and setup FFmpeg if needed
@@ -277,6 +281,36 @@ class MainWindow(QMainWindow):
         subtitle_panel_action.setShortcut("Ctrl+T")
         subtitle_panel_action.triggered.connect(self.toggle_subtitle_panel)
         view_menu.addAction(subtitle_panel_action)
+
+        # --- Tools Menu ---
+        tools_menu = menubar.addMenu("&Tools")
+
+        # Recording actions
+        record_action = QAction("Start &Recording", self)
+        record_action.setShortcut("Ctrl+R")
+        record_action.triggered.connect(self.start_recording_current_channel)
+        tools_menu.addAction(record_action)
+
+        tools_menu.addSeparator()
+
+        # Link validation actions
+        validate_links_action = QAction("&Validate All Links", self)
+        validate_links_action.setShortcut("Ctrl+V")
+        validate_links_action.triggered.connect(self.validate_all_links)
+        tools_menu.addAction(validate_links_action)
+
+        # Auto-update actions
+        update_playlist_action = QAction("&Update Current Playlist", self)
+        update_playlist_action.setShortcut("F5")
+        update_playlist_action.triggered.connect(self.update_current_playlist)
+        tools_menu.addAction(update_playlist_action)
+
+        tools_menu.addSeparator()
+
+        # Settings for enhanced features
+        enhanced_settings_action = QAction("Enhanced &Features Settings...", self)
+        enhanced_settings_action.triggered.connect(self.show_enhanced_settings)
+        tools_menu.addAction(enhanced_settings_action)
 
         # --- Help Menu ---
         help_menu = menubar.addMenu("&Help")
@@ -463,6 +497,30 @@ class MainWindow(QMainWindow):
             self.player.position_changed.connect(self._on_position_changed_for_subtitles)
 
         print("Subtitle system initialized successfully")
+
+    def init_enhanced_features(self):
+        """Initialize enhanced features: recording, dead link detection, auto-updates."""
+        # Initialize recording manager
+        self.recording_manager = RecordingManager(self.settings_manager)
+
+        # Initialize dead link manager
+        self.dead_link_manager = DeadLinkManager(self.settings_manager)
+        self.dead_link_manager.dead_links_detected.connect(self.on_dead_links_detected)
+        self.dead_link_manager.links_validated.connect(self.on_links_validated)
+        self.dead_link_manager.validation_progress.connect(self.on_validation_progress)
+
+        # Initialize auto-saver for M3U files
+        self.m3u_auto_saver = M3UAutoSaver(self.settings_manager)
+        self.m3u_auto_saver.file_saved.connect(self.on_m3u_file_saved)
+        self.m3u_auto_saver.save_failed.connect(self.on_m3u_save_failed)
+
+        # Initialize playlist auto-updater
+        self.playlist_auto_updater = PlaylistAutoUpdater(self.settings_manager, self.playlist_manager)
+        self.playlist_auto_updater.update_started.connect(self.on_playlist_update_started)
+        self.playlist_auto_updater.update_completed.connect(self.on_playlist_update_completed)
+        self.playlist_auto_updater.update_failed.connect(self.on_playlist_update_failed)
+
+        print("Enhanced features initialized successfully")
 
     def check_ffmpeg_setup(self):
         """Check if FFmpeg is available and setup if needed."""
@@ -1788,6 +1846,18 @@ streaming live television content from M3U playlists.</p>
         if self.is_fullscreen:
             self.exit_fullscreen()
 
+        # Stop enhanced features
+        if hasattr(self, "dead_link_manager"):
+            self.dead_link_manager.stop_auto_checking()
+
+        if hasattr(self, "playlist_auto_updater"):
+            self.playlist_auto_updater.stop_auto_updates()
+
+        if hasattr(self, "recording_manager"):
+            # Stop any active recordings
+            for session_id in list(self.recording_manager.active_sessions.keys()):
+                self.recording_manager.stop_recording(session_id)
+
         # Stop and cleanup player
         if hasattr(self, "player") and self.player:
             self.player.stop()
@@ -1866,6 +1936,296 @@ streaming live television content from M3U playlists.</p>
         # Update channel info overlay position
         if hasattr(self, 'channel_info_overlay'):
             self.channel_info_overlay.update_position()
+
+    # Enhanced Features Callbacks
+    def on_dead_links_detected(self, dead_links):
+        """Handle detection of dead links."""
+        dead_count = len(dead_links)
+        self.status_manager.show_warning(f"Found {dead_count} dead links")
+
+        # If auto-removal is enabled, remove them
+        if self.settings_manager.get_setting("auto_remove_dead_links", False):
+            self.remove_dead_links(dead_links)
+        else:
+            # Show dialog asking user what to do
+            self.show_dead_links_dialog(dead_links)
+
+    def on_links_validated(self, valid_count, total_count):
+        """Handle completion of link validation."""
+        dead_count = total_count - valid_count
+        if dead_count == 0:
+            self.status_manager.show_success(f"All {total_count} links are valid")
+        else:
+            self.status_manager.show_info(f"Validation complete: {valid_count}/{total_count} links valid")
+
+    def on_validation_progress(self, current, total):
+        """Handle validation progress updates."""
+        self.status_manager.show_info(f"Validating links: {current}/{total}")
+
+    def on_m3u_file_saved(self, file_path):
+        """Handle successful M3U file save."""
+        filename = os.path.basename(file_path)
+        self.status_manager.show_success(f"Saved: {filename}")
+
+    def on_m3u_save_failed(self, file_path, error_message):
+        """Handle M3U file save failure."""
+        filename = os.path.basename(file_path)
+        self.status_manager.show_error(f"Failed to save {filename}: {error_message}")
+
+    def on_playlist_update_started(self, playlist_id):
+        """Handle start of playlist update."""
+        playlist = self.playlist_manager.playlists.get(playlist_id)
+        if playlist:
+            self.status_manager.show_info(f"Updating playlist: {playlist.name}")
+
+    def on_playlist_update_completed(self, playlist_id, result):
+        """Handle completion of playlist update."""
+        playlist = self.playlist_manager.playlists.get(playlist_id)
+        if playlist and result.success:
+            message = f"Updated {playlist.name}"
+            if result.channels_added > 0 or result.channels_removed > 0:
+                message += f" (+{result.channels_added}, -{result.channels_removed})"
+            self.status_manager.show_success(message)
+
+            # Reload if this is the current playlist
+            if self.current_m3u_path == playlist.source:
+                self.parse_m3u_file(playlist.cached_file_path or playlist.source)
+
+    def on_playlist_update_failed(self, playlist_id, error_message):
+        """Handle playlist update failure."""
+        playlist = self.playlist_manager.playlists.get(playlist_id)
+        if playlist:
+            self.status_manager.show_error(f"Failed to update {playlist.name}: {error_message}")
+
+    def remove_dead_links(self, dead_links):
+        """Remove dead links from the current playlist."""
+        if not self.all_channels_data:
+            return
+
+        dead_urls = {link.url for link in dead_links}
+        original_count = len(self.all_channels_data)
+
+        # Remove dead channels
+        self.all_channels_data = [
+            channel for channel in self.all_channels_data
+            if channel.get("url") not in dead_urls
+        ]
+
+        # Update categories
+        for category_name, channels in self.categories_data.items():
+            self.categories_data[category_name] = [
+                channel for channel in channels
+                if channel.get("url") not in dead_urls
+            ]
+
+        removed_count = original_count - len(self.all_channels_data)
+
+        # Update UI
+        self.update_channel_list()
+
+        # Auto-save if enabled
+        if self.current_m3u_path and self.settings_manager.get_setting("auto_save_m3u", True):
+            self.m3u_auto_saver.schedule_save(
+                self.current_m3u_path,
+                self.all_channels_data,
+                self.categories_data
+            )
+
+        self.status_manager.show_success(f"Removed {removed_count} dead links")
+
+    def show_dead_links_dialog(self, dead_links):
+        """Show dialog with dead links for user review."""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QListWidget, QPushButton, QLabel
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Dead Links Detected")
+        dialog.setModal(True)
+        dialog.resize(600, 400)
+
+        layout = QVBoxLayout(dialog)
+
+        # Info label
+        info_label = QLabel(f"Found {len(dead_links)} dead links:")
+        layout.addWidget(info_label)
+
+        # List of dead links
+        list_widget = QListWidget()
+        for link in dead_links:
+            # Find channel name for this URL
+            channel_name = "Unknown"
+            for channel in self.all_channels_data:
+                if channel.get("url") == link.url:
+                    channel_name = channel.get("name", "Unknown")
+                    break
+            list_widget.addItem(f"{channel_name} - {link.url}")
+        layout.addWidget(list_widget)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+
+        remove_button = QPushButton("Remove Dead Links")
+        remove_button.clicked.connect(lambda: self.remove_dead_links(dead_links))
+        remove_button.clicked.connect(dialog.accept)
+
+        keep_button = QPushButton("Keep All Links")
+        keep_button.clicked.connect(dialog.reject)
+
+        button_layout.addWidget(remove_button)
+        button_layout.addWidget(keep_button)
+        layout.addLayout(button_layout)
+
+        dialog.exec()
+
+    def start_recording_current_channel(self):
+        """Start recording the currently playing channel."""
+        if not hasattr(self, 'recording_manager'):
+            self.status_manager.show_error("Recording not available")
+            return
+
+        current_channel = self.channel_list_widget.get_selected_channel()
+        if not current_channel:
+            self.status_manager.show_error("No channel selected")
+            return
+
+        channel_name = current_channel.get("name", "Unknown")
+        stream_url = current_channel.get("url")
+
+        if not stream_url:
+            self.status_manager.show_error("No stream URL available")
+            return
+
+        # Start recording
+        session_id = self.recording_manager.start_recording(
+            channel_name, stream_url
+        )
+
+        if session_id:
+            self.status_manager.show_success(f"Started recording: {channel_name}")
+        else:
+            self.status_manager.show_error("Failed to start recording")
+
+    def validate_all_links(self):
+        """Manually trigger validation of all channel links."""
+        if not self.all_channels_data:
+            self.status_manager.show_warning("No channels loaded")
+            return
+
+        self.status_manager.show_info("Starting link validation...")
+        self.dead_link_manager.validate_channels(self.all_channels_data)
+
+    def update_current_playlist(self):
+        """Manually trigger update of current playlist."""
+        if not self.current_m3u_path:
+            self.status_manager.show_warning("No playlist loaded")
+            return
+
+        playlist_entry = self.playlist_manager.get_playlist_by_source(self.current_m3u_path)
+        if playlist_entry:
+            self.playlist_auto_updater.update_playlist(playlist_entry.id)
+        else:
+            self.status_manager.show_warning("Current playlist not found in manager")
+
+    def show_enhanced_settings(self):
+        """Show enhanced features settings dialog."""
+        from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QCheckBox,
+                                     QSpinBox, QLabel, QPushButton, QGroupBox, QFormLayout)
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Enhanced Features Settings")
+        dialog.setModal(True)
+        dialog.resize(500, 400)
+
+        layout = QVBoxLayout(dialog)
+
+        # Auto-save group
+        autosave_group = QGroupBox("Auto-Save M3U Files")
+        autosave_layout = QFormLayout(autosave_group)
+
+        autosave_checkbox = QCheckBox()
+        autosave_checkbox.setChecked(self.settings_manager.get_setting("auto_save_m3u", True))
+        autosave_layout.addRow("Enable auto-save:", autosave_checkbox)
+
+        layout.addWidget(autosave_group)
+
+        # Dead link detection group
+        deadlink_group = QGroupBox("Dead Link Detection")
+        deadlink_layout = QFormLayout(deadlink_group)
+
+        deadlink_checkbox = QCheckBox()
+        deadlink_checkbox.setChecked(self.settings_manager.get_setting("dead_link_detection", True))
+        deadlink_layout.addRow("Enable detection:", deadlink_checkbox)
+
+        deadlink_interval = QSpinBox()
+        deadlink_interval.setRange(1, 168)  # 1 hour to 1 week
+        deadlink_interval.setValue(self.settings_manager.get_setting("dead_link_check_interval_hours", 6))
+        deadlink_layout.addRow("Check interval (hours):", deadlink_interval)
+
+        deadlink_timeout = QSpinBox()
+        deadlink_timeout.setRange(5, 60)  # 5 to 60 seconds
+        deadlink_timeout.setValue(self.settings_manager.get_setting("dead_link_timeout_seconds", 10))
+        deadlink_layout.addRow("Timeout (seconds):", deadlink_timeout)
+
+        auto_remove_checkbox = QCheckBox()
+        auto_remove_checkbox.setChecked(self.settings_manager.get_setting("auto_remove_dead_links", False))
+        deadlink_layout.addRow("Auto-remove dead links:", auto_remove_checkbox)
+
+        layout.addWidget(deadlink_group)
+
+        # Auto-update group
+        autoupdate_group = QGroupBox("Automatic Playlist Updates")
+        autoupdate_layout = QFormLayout(autoupdate_group)
+
+        autoupdate_checkbox = QCheckBox()
+        autoupdate_checkbox.setChecked(self.settings_manager.get_setting("auto_update_playlists", True))
+        autoupdate_layout.addRow("Enable auto-update:", autoupdate_checkbox)
+
+        update_interval = QSpinBox()
+        update_interval.setRange(1, 168)  # 1 hour to 1 week
+        update_interval.setValue(self.settings_manager.get_setting("auto_update_interval_hours", 24))
+        autoupdate_layout.addRow("Update interval (hours):", update_interval)
+
+        layout.addWidget(autoupdate_group)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+
+        save_button = QPushButton("Save")
+        save_button.clicked.connect(lambda: self._save_enhanced_settings(
+            dialog, autosave_checkbox, deadlink_checkbox, deadlink_interval,
+            deadlink_timeout, auto_remove_checkbox, autoupdate_checkbox, update_interval
+        ))
+
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(dialog.reject)
+
+        button_layout.addWidget(save_button)
+        button_layout.addWidget(cancel_button)
+        layout.addLayout(button_layout)
+
+        dialog.exec()
+
+    def _save_enhanced_settings(self, dialog, autosave_checkbox, deadlink_checkbox,
+                              deadlink_interval, deadlink_timeout, auto_remove_checkbox,
+                              autoupdate_checkbox, update_interval):
+        """Save enhanced features settings."""
+        # Save settings
+        self.settings_manager.set_setting("auto_save_m3u", autosave_checkbox.isChecked())
+        self.settings_manager.set_setting("dead_link_detection", deadlink_checkbox.isChecked())
+        self.settings_manager.set_setting("dead_link_check_interval_hours", deadlink_interval.value())
+        self.settings_manager.set_setting("dead_link_timeout_seconds", deadlink_timeout.value())
+        self.settings_manager.set_setting("auto_remove_dead_links", auto_remove_checkbox.isChecked())
+        self.settings_manager.set_setting("auto_update_playlists", autoupdate_checkbox.isChecked())
+        self.settings_manager.set_setting("auto_update_interval_hours", update_interval.value())
+
+        # Restart enhanced features with new settings
+        if hasattr(self, "dead_link_manager"):
+            self.dead_link_manager.setup_auto_checking()
+
+        if hasattr(self, "playlist_auto_updater"):
+            self.playlist_auto_updater.setup_auto_updates()
+
+        self.status_manager.show_success("Enhanced features settings saved")
+        dialog.accept()
 
 
 if __name__ == "__main__":

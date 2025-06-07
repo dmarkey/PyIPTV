@@ -24,6 +24,17 @@ class SettingsManager:
         "search_delay_ms": 300,  # Search delay in milliseconds
         "render_buffer_size": 5,  # Extra items to render for smooth scrolling
         "progress_update_interval": 1000,  # Update progress every N channels
+        # Enhanced features settings
+        "auto_save_m3u": True,  # Auto-save edited M3U files
+        "auto_update_playlists": True,  # Automatic playlist updates
+        "auto_update_interval_hours": 24,  # Update interval in hours
+        "dead_link_detection": True,  # Enable dead link detection
+        "dead_link_check_interval_hours": 6,  # Check interval for dead links
+        "dead_link_timeout_seconds": 10,  # Timeout for link checking
+        "auto_remove_dead_links": False,  # Auto-remove dead links (default: false for safety)
+        "recording_enabled": True,  # Enable recording functionality
+        "recording_output_dir": None,  # Will be set to default recordings folder
+        "recording_format": "mp4",  # Default recording format
         "max_search_results": 50000,  # Limit search results for performance
         "enable_channel_icons": False,  # Disable icons for large files by default
     }
