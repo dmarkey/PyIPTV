@@ -99,19 +99,21 @@ class EnhancedControlBar(QWidget):
         self.stop_btn.clicked.connect(self.stop_clicked)
 
         # Record button
-        self.record_btn = QPushButton("🔴")
+        self.record_btn = QPushButton("🔴 REC")
         self.record_btn.setToolTip("Start Recording (Ctrl+R)")
-        self.record_btn.setMaximumWidth(40)
+        self.record_btn.setMinimumWidth(60)
+        self.record_btn.setMaximumWidth(80)
         self.record_btn.clicked.connect(self.record_clicked)
         self.record_btn.setStyleSheet("""
             QPushButton {
-                font-size: 16px;
+                font-size: 12px;
                 font-weight: bold;
                 border: 2px solid #dc3545;
                 border-radius: 6px;
                 background-color: transparent;
                 color: #dc3545;
-                padding: 4px;
+                padding: 6px 8px;
+                min-height: 24px;
             }
             QPushButton:hover {
                 background-color: #dc3545;
@@ -130,6 +132,9 @@ class EnhancedControlBar(QWidget):
         controls_layout.addWidget(self.play_pause_btn)
         controls_layout.addWidget(self.stop_btn)
         controls_layout.addWidget(self.record_btn)
+
+        # Debug: Verify record button is created
+        print(f"Record button created: {self.record_btn.text()}, visible: {self.record_btn.isVisible()}")
 
         # Spacer
         controls_layout.addStretch()
@@ -237,22 +242,23 @@ class EnhancedControlBar(QWidget):
         """Update the record button state."""
         if is_recording:
             if recording_count > 1:
-                self.record_btn.setText(f"🔴{recording_count}")
+                self.record_btn.setText(f"🔴 {recording_count}")
                 self.record_btn.setToolTip(f"Recording {recording_count} channels (Click to stop current)")
             else:
-                self.record_btn.setText("⏹️")
+                self.record_btn.setText("⏹️ STOP")
                 self.record_btn.setToolTip("Stop Recording (Ctrl+R)")
 
             # Update style for active recording
             self.record_btn.setStyleSheet("""
                 QPushButton {
-                    font-size: 16px;
+                    font-size: 12px;
                     font-weight: bold;
                     border: 2px solid #dc3545;
                     border-radius: 6px;
                     background-color: #dc3545;
                     color: white;
-                    padding: 4px;
+                    padding: 6px 8px;
+                    min-height: 24px;
                 }
                 QPushButton:hover {
                     background-color: #c82333;
@@ -262,19 +268,20 @@ class EnhancedControlBar(QWidget):
                 }
             """)
         else:
-            self.record_btn.setText("🔴")
+            self.record_btn.setText("🔴 REC")
             self.record_btn.setToolTip("Start Recording (Ctrl+R)")
 
             # Reset to default style
             self.record_btn.setStyleSheet("""
                 QPushButton {
-                    font-size: 16px;
+                    font-size: 12px;
                     font-weight: bold;
                     border: 2px solid #dc3545;
                     border-radius: 6px;
                     background-color: transparent;
                     color: #dc3545;
-                    padding: 4px;
+                    padding: 6px 8px;
+                    min-height: 24px;
                 }
                 QPushButton:hover {
                     background-color: #dc3545;

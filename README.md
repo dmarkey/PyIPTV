@@ -108,11 +108,13 @@ Record live IPTV streams directly to your local storage:
 - **Background Recording**: Continue recording while watching other channels
 
 **How to Record:**
-1. **Right-click method** (easiest): Right-click any channel → "🔴 Start Recording"
-2. **Keyboard shortcut**: Select channel + press `Ctrl+R`
-3. **Tools menu**: Tools → "Start Recording"
+1. **🔴 Record Button** (easiest): Click the red 🔴 button next to Stop in player controls
+2. **Right-click method**: Right-click any channel → "🔴 Start Recording"
+3. **Keyboard shortcut**: Select channel + press `Ctrl+R`
+4. **Tools menu**: Tools → "Start Recording"
 
 **Recording Management:**
+- **🔴 Record Button**: Prominent red button in player controls (toggles recording)
 - **Active recordings widget**: Shows all recordings with stop controls
 - **Status bar indicator**: Displays recording count (🔴 Recording (2))
 - **Real-time updates**: Duration and file size shown live
