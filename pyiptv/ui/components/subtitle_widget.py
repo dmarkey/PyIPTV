@@ -140,6 +140,10 @@ class SubtitleControlWidget(QWidget):
         # Load subtitle file button
         self.load_button = QPushButton("Load Subtitle File...")
         track_layout.addWidget(self.load_button)
+
+        # Detect embedded tracks button
+        self.detect_button = QPushButton("Detect Embedded Tracks")
+        track_layout.addWidget(self.detect_button)
         
         layout.addWidget(track_group)
         
@@ -191,6 +195,7 @@ class SubtitleControlWidget(QWidget):
         """Connect widget signals."""
         self.track_combo.currentTextChanged.connect(self._on_track_changed)
         self.load_button.clicked.connect(self._on_load_subtitle)
+        self.detect_button.clicked.connect(self._on_detect_embedded)
         self.enable_checkbox.toggled.connect(self.subtitles_toggled.emit)
         self.font_size_slider.valueChanged.connect(self._on_font_size_changed)
         self.font_size_spinbox.valueChanged.connect(self._on_font_size_changed)
@@ -249,14 +254,33 @@ class SubtitleControlWidget(QWidget):
     def _on_subtitle_loaded(self, track):
         """Handle new subtitle track loaded."""
         self.refresh_tracks()
-        
+
+    def _on_detect_embedded(self):
+        """Detect and load embedded subtitle tracks."""
+        if hasattr(self, 'current_media_url') and self.current_media_url:
+            try:
+                embedded_tracks = self.subtitle_manager.detect_embedded_tracks(self.current_media_url)
+                if embedded_tracks:
+                    self.refresh_tracks()
+                    print(f"Detected {len(embedded_tracks)} embedded subtitle tracks")
+                else:
+                    print("No embedded subtitle tracks found")
+            except Exception as e:
+                print(f"Error detecting embedded tracks: {e}")
+        else:
+            print("No media loaded to detect embedded tracks")
+
+    def set_current_media_url(self, url: str):
+        """Set the current media URL for embedded track detection."""
+        self.current_media_url = url
+
     def refresh_tracks(self):
         """Refresh the track combo box."""
         self.track_combo.clear()
         self.track_combo.addItem("None", "")
         
         for track in self.subtitle_manager.get_available_tracks():
-            display_name = f"{track.title} ({track.language})"
+            display_name = track.display_name
             self.track_combo.addItem(display_name, track.id)
             
     def get_current_settings(self) -> Dict[str, Any]:

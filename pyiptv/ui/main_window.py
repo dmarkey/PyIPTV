@@ -34,7 +34,8 @@ from pyiptv.ui.components.enhanced_controls import EnhancedControlBar
 from pyiptv.ui.components.simplified_operations import SimplifiedOperationManager
 from pyiptv.ui.components.unified_status_system import StatusManager, UnifiedStatusBar
 from pyiptv.ui.components.video_placeholder import VideoPlaceholder
-from pyiptv.ui.components.virtualized_channel_list import VirtualizedChannelList
+from pyiptv.ui.components.enhanced_channel_list import EnhancedChannelList
+from pyiptv.ui.components.channel_info_display import ChannelInfoDisplay, SimpleChannelInfoBar
 from pyiptv.ui.components.subtitle_widget import SubtitleDisplayWidget, SubtitleControlWidget
 from pyiptv.ui.playlist_manager_window import PlaylistManagerWindow
 from pyiptv.ui.themes import ModernDarkTheme, ThemeManager
@@ -260,6 +261,14 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
+        # --- View Menu ---
+        view_menu = menubar.addMenu("&View")
+
+        subtitle_panel_action = QAction("&Subtitle Controls...", self)
+        subtitle_panel_action.setShortcut("Ctrl+T")
+        subtitle_panel_action.triggered.connect(self.toggle_subtitle_panel)
+        view_menu.addAction(subtitle_panel_action)
+
         # --- Help Menu ---
         help_menu = menubar.addMenu("&Help")
 
@@ -307,9 +316,9 @@ class MainWindow(QMainWindow):
         self.left_layout.addLayout(category_search_layout)
         self.left_layout.addWidget(self.category_list_widget)
 
-        # Channel List - Using virtualized widget for performance
+        # Channel List - Using enhanced widget with logo support
         self.channel_label = QLabel("Channels:")
-        self.channel_list_widget = VirtualizedChannelList()
+        self.channel_list_widget = EnhancedChannelList()
         self.channel_list_widget.channel_selected.connect(self.on_channel_selected)
         self.channel_list_widget.channel_activated.connect(self.on_channel_activated)
         self.left_layout.addWidget(self.channel_label)
@@ -414,6 +423,23 @@ class MainWindow(QMainWindow):
         self.subtitle_display = SubtitleDisplayWidget(self)
         self.subtitle_display.hide()  # Initially hidden
 
+        # Create subtitle control widget
+        self.subtitle_control = SubtitleControlWidget(self.subtitle_manager, self)
+        self.subtitle_control.hide()  # Initially hidden
+
+        # Connect subtitle control signals
+        self.subtitle_control.track_changed.connect(self._on_subtitle_track_changed)
+
+        # Add subtitle control to the right layout (after control bar)
+        # We'll add it dynamically when toggled
+
+        # Create channel info display components
+        self.channel_info_overlay = ChannelInfoDisplay(self)
+        self.channel_info_bar = SimpleChannelInfoBar(self)
+
+        # Add channel info bar to the right layout (after control bar)
+        self.right_layout.addWidget(self.channel_info_bar)
+
         # Connect subtitle manager signals
         self.subtitle_manager.subtitle_text_updated.connect(
             self.subtitle_display.update_subtitle_text
@@ -423,7 +449,6 @@ class MainWindow(QMainWindow):
         if hasattr(self.player, 'position_changed'):
             self.player.position_changed.connect(self._on_position_changed_for_subtitles)
 
-        # Add subtitle controls to settings dialog (will be implemented later)
         print("Subtitle system initialized successfully")
 
     def init_simplified_ux_system(self):
@@ -522,6 +547,12 @@ class MainWindow(QMainWindow):
 
         self.subtitle_load_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
         self.subtitle_load_shortcut.activated.connect(self.load_subtitle_file)
+
+        self.subtitle_detect_shortcut = QShortcut(QKeySequence("Ctrl+D"), self)
+        self.subtitle_detect_shortcut.activated.connect(self.detect_embedded_subtitles)
+
+        self.subtitle_panel_shortcut = QShortcut(QKeySequence("Ctrl+T"), self)
+        self.subtitle_panel_shortcut.activated.connect(self.toggle_subtitle_panel)
 
     def _on_playback_error(self, error_message):
         """Handles playback errors signaled by the media player."""
@@ -809,9 +840,12 @@ class MainWindow(QMainWindow):
         self.channel_list_widget.set_channels(channels_to_display)
 
     def on_channel_selected(self, channel_info):
-        """Handle channel selection in the virtualized list."""
+        """Handle channel selection in the enhanced list."""
         # This is called when a channel is selected (single click)
-        # We can show additional info in status bar or elsewhere
+        # Update the channel info bar
+        self.channel_info_bar.update_channel_info(channel_info)
+
+        # Show additional info in status bar
         channel_name = channel_info.get("name", "Unknown Channel")
         self.status_manager.show_info(f"Selected: {channel_name}", timeout=3000)
 
@@ -839,6 +873,26 @@ class MainWindow(QMainWindow):
 
             # Update UI
             self.control_bar.update_play_state(True)
+
+            # Show channel info overlay
+            if hasattr(self, 'channel_info_overlay'):
+                self.channel_info_overlay.show_channel_info(channel_info, duration_ms=5000)
+
+            # Update channel info bar
+            if hasattr(self, 'channel_info_bar'):
+                self.channel_info_bar.update_channel_info(channel_info)
+
+            # Detect embedded subtitle tracks for the new media
+            if hasattr(self, 'subtitle_manager'):
+                try:
+                    embedded_tracks = self.subtitle_manager.detect_embedded_tracks(url)
+                    if embedded_tracks:
+                        self.status_manager.show_info(
+                            f"Detected {len(embedded_tracks)} embedded subtitle tracks",
+                            timeout=3000
+                        )
+                except Exception as e:
+                    print(f"Error detecting embedded tracks: {e}")
 
             # Hide loading state after a short delay
             QTimer.singleShot(2000, lambda: self.show_loading_state(False))
@@ -996,6 +1050,96 @@ class MainWindow(QMainWindow):
         else:
             self.status_manager.show_info("Subtitle system not available", timeout=2000)
 
+    def detect_embedded_subtitles(self):
+        """Manually detect embedded subtitle tracks in current media."""
+        if hasattr(self, 'subtitle_manager') and self.player.current_url:
+            try:
+                embedded_tracks = self.subtitle_manager.detect_embedded_tracks(self.player.current_url)
+                if embedded_tracks:
+                    self.status_manager.show_info(
+                        f"Found {len(embedded_tracks)} embedded subtitle tracks",
+                        timeout=3000
+                    )
+                    # Show available tracks
+                    track_names = [track.display_name for track in embedded_tracks]
+                    print(f"Available embedded tracks: {', '.join(track_names)}")
+                else:
+                    self.status_manager.show_info("No embedded subtitle tracks found", timeout=2000)
+            except Exception as e:
+                self.status_manager.show_error(f"Error detecting subtitles: {str(e)}")
+        else:
+            self.status_manager.show_info("No media loaded or subtitle system unavailable", timeout=2000)
+
+    def toggle_subtitle_panel(self):
+        """Toggle the subtitle control panel visibility."""
+        if hasattr(self, 'subtitle_control'):
+            if self.subtitle_control.isVisible():
+                # Hide the panel
+                self.subtitle_control.hide()
+                self.right_layout.removeWidget(self.subtitle_control)
+                self.status_manager.show_info("Subtitle panel hidden", timeout=1500)
+            else:
+                # Show the panel
+                self.right_layout.addWidget(self.subtitle_control)
+                self.subtitle_control.show()
+                self.status_manager.show_info("Subtitle panel shown", timeout=1500)
+
+                # Auto-detect embedded tracks when panel is opened
+                if self.player.current_url:
+                    self.detect_embedded_subtitles()
+        else:
+            self.status_manager.show_info("Subtitle system not available", timeout=2000)
+
+    def _on_subtitle_track_changed(self, track_id: str):
+        """Handle subtitle track selection change."""
+        if not track_id:
+            # "None" selected - disable subtitles
+            if hasattr(self, 'subtitle_manager'):
+                self.subtitle_manager.disable_subtitles()
+                self.status_manager.show_info("Subtitles disabled", timeout=1500)
+            return
+
+        if hasattr(self, 'subtitle_manager'):
+            track = self.subtitle_manager.tracks.get(track_id)
+            if track:
+                if track.is_embedded:
+                    # Handle embedded track
+                    success = self.subtitle_manager.set_embedded_track(track_id)
+                    if success:
+                        self.status_manager.show_info(f"Activated: {track.display_name}", timeout=2000)
+                        # For embedded tracks, we need to tell the media player to use this subtitle stream
+                        self._activate_embedded_subtitle_in_player(track)
+                    else:
+                        self.status_manager.show_error("Failed to activate embedded subtitle track")
+                else:
+                    # Handle external track
+                    success = self.subtitle_manager.set_active_track(track_id)
+                    if success:
+                        self.status_manager.show_info(f"Loaded: {track.display_name}", timeout=2000)
+                    else:
+                        self.status_manager.show_error("Failed to load subtitle track")
+            else:
+                self.status_manager.show_error("Subtitle track not found")
+        else:
+            self.status_manager.show_info("Subtitle system not available", timeout=2000)
+
+    def _activate_embedded_subtitle_in_player(self, track):
+        """Activate embedded subtitle track in the media player."""
+        if hasattr(self.player, 'set_subtitle_track') and track.stream_index is not None:
+            # If the player supports subtitle track selection
+            try:
+                self.player.set_subtitle_track(track.stream_index)
+                print(f"Activated embedded subtitle track {track.stream_index} ({track.language})")
+            except Exception as e:
+                print(f"Error activating embedded subtitle track: {e}")
+                self.status_manager.show_warning("Player doesn't support embedded subtitle switching")
+        else:
+            # Fallback: show info about the limitation
+            self.status_manager.show_info(
+                f"Selected {track.display_name} - Note: Embedded subtitle switching requires player support",
+                timeout=4000
+            )
+
     def _on_position_changed_for_subtitles(self, position_ms):
         """Handle position changes for subtitle timing."""
         if hasattr(self, 'subtitle_manager'):
@@ -1080,6 +1224,8 @@ class MainWindow(QMainWindow):
 <table>
 <tr><td><b>C</b></td><td>Toggle subtitles on/off</td></tr>
 <tr><td><b>Ctrl+S</b></td><td>Load subtitle file</td></tr>
+<tr><td><b>Ctrl+D</b></td><td>Detect embedded subtitles</td></tr>
+<tr><td><b>Ctrl+T</b></td><td>Toggle subtitle control panel</td></tr>
 </table>
 
 <h3>📁 File & Application</h3>
@@ -1470,6 +1616,14 @@ streaming live television content from M3U playlists.</p>
         title = self.windowTitle()
         if title.endswith(" - Working..."):
             self.setWindowTitle(title.replace(" - Working...", ""))
+
+    def resizeEvent(self, event):
+        """Handle window resize."""
+        super().resizeEvent(event)
+
+        # Update channel info overlay position
+        if hasattr(self, 'channel_info_overlay'):
+            self.channel_info_overlay.update_position()
 
 
 if __name__ == "__main__":

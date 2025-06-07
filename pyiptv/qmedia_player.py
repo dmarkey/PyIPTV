@@ -55,6 +55,10 @@ class QMediaVideoPlayer(QObject):
         # Store current metadata
         self.current_metadata = {}
 
+        # Subtitle track support
+        self.available_subtitle_tracks = []
+        self.current_subtitle_track = -1  # -1 means no subtitle track selected
+
     def set_video_widget(self, video_widget):
         """Set the video widget for output."""
         self.video_widget = video_widget
@@ -484,4 +488,83 @@ class QMediaVideoPlayer(QObject):
                 print("Current audio track detection not available in this Qt version")
         except Exception as e:
             print(f"Error getting current audio track: {e}")
+        return -1
+
+    def get_subtitle_tracks(self):
+        """Get available subtitle tracks with raw information."""
+        subtitle_tracks = []
+        try:
+            if self.player and hasattr(self.player, "subtitleTracks"):
+                tracks = self.player.subtitleTracks()
+                for i, track in enumerate(tracks):
+                    # Get raw track information
+                    track_info = {
+                        "index": i,
+                        "language": "",
+                        "description": "",
+                        "title": "",
+                    }
+
+                    # Get language if available
+                    if hasattr(track, "language"):
+                        lang = getattr(track, "language", None)
+                        if lang:
+                            track_info["language"] = str(lang)
+
+                    # Get description if available
+                    if hasattr(track, "description"):
+                        desc = getattr(track, "description", None)
+                        if desc:
+                            track_info["description"] = str(desc)
+
+                    # Get title if available
+                    if hasattr(track, "title"):
+                        title = getattr(track, "title", None)
+                        if title:
+                            track_info["title"] = str(title)
+
+                    subtitle_tracks.append(track_info)
+            else:
+                # Fallback for older Qt versions or limited API
+                print("Subtitle track enumeration not available in this Qt version")
+        except Exception as e:
+            print(f"Error getting subtitle tracks: {e}")
+        return subtitle_tracks
+
+    def set_subtitle_track(self, track_index):
+        """Set the active subtitle track by index."""
+        try:
+            if self.player and hasattr(self.player, "setActiveSubtitleTrack"):
+                tracks = self.player.subtitleTracks()
+                if track_index == -1:
+                    # Disable subtitles
+                    self.player.setActiveSubtitleTrack(-1)
+                    self.current_subtitle_track = -1
+                    print("Subtitles disabled")
+                    return True
+                elif 0 <= track_index < len(tracks):
+                    # Enable specific subtitle track
+                    self.player.setActiveSubtitleTrack(track_index)
+                    self.current_subtitle_track = track_index
+                    print(f"Switched to subtitle track {track_index}")
+                    return True
+                else:
+                    print(f"Invalid subtitle track index: {track_index}")
+            else:
+                print("Subtitle track switching not available in this Qt version")
+        except Exception as e:
+            print(f"Error setting subtitle track: {e}")
+        return False
+
+    def get_current_subtitle_track(self):
+        """Get the currently active subtitle track index."""
+        try:
+            if self.player and hasattr(self.player, "activeSubtitleTrack"):
+                # activeSubtitleTrack() returns the index directly
+                active_track_index = self.player.activeSubtitleTrack()
+                return active_track_index if active_track_index is not None else -1
+            else:
+                print("Current subtitle track detection not available in this Qt version")
+        except Exception as e:
+            print(f"Error getting current subtitle track: {e}")
         return -1

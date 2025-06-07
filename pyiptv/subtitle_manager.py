@@ -30,6 +30,16 @@ class SubtitleTrack:
     url: Optional[str] = None
     is_embedded: bool = False
     is_active: bool = False
+    stream_index: Optional[int] = None  # For embedded tracks
+    codec: Optional[str] = None  # Subtitle codec (mov_text, subrip, etc.)
+
+    @property
+    def display_name(self) -> str:
+        """Get display name for the track."""
+        if self.is_embedded:
+            return f"{self.language} (Embedded)"
+        else:
+            return f"{self.language} (External)"
 
 
 @dataclass
@@ -353,3 +363,147 @@ class SubtitleManager(QObject):
         self.current_track = None
         self.current_entries.clear()
         self.subtitle_text_updated.emit("")
+
+    def detect_embedded_tracks(self, media_url: str) -> List[SubtitleTrack]:
+        """
+        Detect embedded subtitle tracks in a media stream using ffprobe.
+
+        Args:
+            media_url: URL or path to the media file
+
+        Returns:
+            List of detected embedded subtitle tracks
+        """
+        import subprocess
+        import json
+
+        embedded_tracks = []
+
+        try:
+            # Use ffprobe to get stream information
+            cmd = [
+                "ffprobe",
+                "-v", "quiet",
+                "-print_format", "json",
+                "-show_streams",
+                "-select_streams", "s",  # Select only subtitle streams
+                media_url
+            ]
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                streams = data.get("streams", [])
+
+                for stream in streams:
+                    if stream.get("codec_type") == "subtitle":
+                        # Extract language and other metadata
+                        language = stream.get("tags", {}).get("language", "unknown")
+                        codec_name = stream.get("codec_name", "unknown")
+                        stream_index = stream.get("index", 0)
+
+                        # Create subtitle track
+                        track_id = f"embedded_{stream_index}"
+                        track = SubtitleTrack(
+                            id=track_id,
+                            language=self._normalize_language_code(language),
+                            title=f"Embedded {language.upper()}",
+                            format=codec_name,
+                            is_embedded=True,
+                            stream_index=stream_index,
+                            codec=codec_name
+                        )
+
+                        embedded_tracks.append(track)
+                        self.tracks[track_id] = track
+
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, json.JSONDecodeError, FileNotFoundError) as e:
+            print(f"Warning: Could not detect embedded subtitles: {e}")
+
+        return embedded_tracks
+
+    def _normalize_language_code(self, lang_code: str) -> str:
+        """
+        Normalize language codes to full language names.
+
+        Args:
+            lang_code: Language code (e.g., 'eng', 'spa', 'fra')
+
+        Returns:
+            Full language name
+        """
+        language_map = {
+            'eng': 'English',
+            'spa': 'Spanish',
+            'fra': 'French',
+            'deu': 'German',
+            'ita': 'Italian',
+            'por': 'Portuguese',
+            'rus': 'Russian',
+            'ara': 'Arabic',
+            'zho': 'Chinese',
+            'chi': 'Chinese',
+            'jpn': 'Japanese',
+            'kor': 'Korean',
+            'hin': 'Hindi',
+            'tur': 'Turkish',
+            'pol': 'Polish',
+            'nld': 'Dutch',
+            'dut': 'Dutch',
+            'swe': 'Swedish',
+            'nor': 'Norwegian',
+            'nob': 'Norwegian',
+            'dan': 'Danish',
+            'fin': 'Finnish',
+            'hun': 'Hungarian',
+            'hrv': 'Croatian',
+            'ind': 'Indonesian',
+            'may': 'Malay',
+            'tha': 'Thai',
+            'vie': 'Vietnamese',
+            'rum': 'Romanian',
+            'ron': 'Romanian'
+        }
+
+        return language_map.get(lang_code.lower(), lang_code.capitalize())
+
+    def set_embedded_track(self, track_id: str) -> bool:
+        """
+        Set an embedded subtitle track as active.
+        This requires integration with the media player.
+
+        Args:
+            track_id: ID of the embedded track
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if track_id not in self.tracks:
+            return False
+
+        track = self.tracks[track_id]
+        if not track.is_embedded:
+            return False
+
+        # Deactivate current track
+        if self.current_track:
+            self.current_track.is_active = False
+
+        # Activate new embedded track
+        track.is_active = True
+        self.current_track = track
+
+        # Emit signal for media player integration
+        self.subtitle_changed.emit(track_id)
+
+        # Note: Actual subtitle display for embedded tracks
+        # needs to be handled by the media player (QMediaPlayer)
+        # This is just for track management
+
+        return True
