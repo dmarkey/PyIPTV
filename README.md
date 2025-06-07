@@ -92,7 +92,7 @@ pyiptv /path/to/your/playlist.m3u
 <summary><strong>🐧 Linux (Ubuntu/Debian)</strong></summary>
 
 ```bash
-sudo apt install python3-pip qt6-multimedia-dev
+sudo apt install python3-pip qt6-multimedia-dev ffmpeg
 ```
 </details>
 
@@ -100,7 +100,7 @@ sudo apt install python3-pip qt6-multimedia-dev
 <summary><strong>🎩 Linux (Fedora/CentOS)</strong></summary>
 
 ```bash
-sudo dnf install python3-pip qt6-qtmultimedia-devel
+sudo dnf install python3-pip qt6-qtmultimedia-devel ffmpeg
 ```
 </details>
 
@@ -108,14 +108,31 @@ sudo dnf install python3-pip qt6-qtmultimedia-devel
 <summary><strong>🍎 macOS</strong></summary>
 
 ```bash
-brew install python qt6
+brew install python qt6 ffmpeg
 ```
 </details>
 
 <details>
 <summary><strong>🪟 Windows</strong></summary>
 
-No additional system dependencies required - PySide6 includes all necessary Qt libraries.
+**FFmpeg Installation Required:**
+
+1. Download FFmpeg from [https://ffmpeg.org/download.html](https://ffmpeg.org/download.html)
+2. Extract the binaries to `ffmpeg_binaries/bin/` in your PyIPTV directory
+3. Required files:
+   - `ffmpeg.exe`
+   - `ffprobe.exe`
+
+Alternatively, install via package manager:
+```bash
+# Using Chocolatey
+choco install ffmpeg
+
+# Using Scoop
+scoop install ffmpeg
+```
+
+No additional Qt dependencies required - PySide6 includes all necessary Qt libraries.
 </details>
 
 ## ⚙️ Configuration
