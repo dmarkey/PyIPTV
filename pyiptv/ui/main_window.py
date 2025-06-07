@@ -38,6 +38,7 @@ from pyiptv.ui.components.video_placeholder import VideoPlaceholder
 from pyiptv.ui.components.enhanced_channel_list import EnhancedChannelList
 from pyiptv.ui.components.channel_info_display import ChannelInfoDisplay, SimpleChannelInfoBar
 from pyiptv.ui.components.subtitle_widget import SubtitleDisplayWidget, SubtitleControlWidget
+from pyiptv.ui.components.recording_status_widget import RecordingStatusWidget
 from pyiptv.ui.playlist_manager_window import PlaylistManagerWindow
 from pyiptv.ui.themes import ModernDarkTheme, ThemeManager
 from pyiptv.subtitle_manager import SubtitleManager
@@ -378,8 +379,14 @@ class MainWindow(QMainWindow):
         self.channel_list_widget = EnhancedChannelList()
         self.channel_list_widget.channel_selected.connect(self.on_channel_selected)
         self.channel_list_widget.channel_activated.connect(self.on_channel_activated)
+        self.channel_list_widget.recording_requested.connect(self.on_recording_requested)
         self.left_layout.addWidget(self.channel_label)
         self.left_layout.addWidget(self.channel_list_widget)
+
+        # Recording Status Widget
+        self.recording_status_widget = RecordingStatusWidget()
+        self.recording_status_widget.stop_recording_requested.connect(self.stop_recording_by_id)
+        self.left_layout.addWidget(self.recording_status_widget)
 
         # Right Pane (Video Player and Controls)
         self.right_pane = QWidget()
@@ -516,6 +523,9 @@ class MainWindow(QMainWindow):
         """Initialize enhanced features: recording, dead link detection, auto-updates, geolocation."""
         # Initialize recording manager
         self.recording_manager = RecordingManager(self.settings_manager)
+        self.recording_manager.recording_started.connect(self.on_recording_started)
+        self.recording_manager.recording_stopped.connect(self.on_recording_stopped)
+        self.recording_manager.recording_failed.connect(self.on_recording_failed)
 
         # Initialize dead link manager
         self.dead_link_manager = DeadLinkManager(self.settings_manager)
@@ -2155,6 +2165,77 @@ streaming live television content from M3U playlists.</p>
     def on_geolocation_status_changed(self, status_message):
         """Handle geolocation status changes."""
         self.status_manager.show_info(status_message)
+
+    def on_recording_requested(self, channel):
+        """Handle recording request from context menu."""
+        if not hasattr(self, 'recording_manager'):
+            self.status_manager.show_error("Recording not available")
+            return
+
+        channel_name = channel.get("name", "Unknown")
+        stream_url = channel.get("url")
+
+        if not stream_url:
+            self.status_manager.show_error("No stream URL available")
+            return
+
+        # Start recording
+        session_id = self.recording_manager.start_recording(
+            channel_name, stream_url
+        )
+
+        if session_id:
+            self.status_manager.show_success(f"Started recording: {channel_name}")
+        else:
+            self.status_manager.show_error("Failed to start recording")
+
+    def stop_recording_by_id(self, session_id):
+        """Stop recording by session ID."""
+        if hasattr(self, 'recording_manager'):
+            success = self.recording_manager.stop_recording(session_id)
+            if success:
+                self.status_manager.show_success("Recording stopped")
+            else:
+                self.status_manager.show_error("Failed to stop recording")
+
+    def on_recording_started(self, session_id):
+        """Handle recording started event."""
+        if hasattr(self, 'recording_status_widget') and hasattr(self, 'recording_manager'):
+            sessions = self.recording_manager.get_all_sessions()
+            for session in sessions:
+                if session.id == session_id:
+                    self.recording_status_widget.add_recording(session)
+                    break
+
+        # Update status bar
+        self.update_recording_status_indicator()
+
+    def on_recording_stopped(self, session_id):
+        """Handle recording stopped event."""
+        if hasattr(self, 'recording_status_widget'):
+            self.recording_status_widget.remove_recording(session_id)
+
+        # Update status bar
+        self.update_recording_status_indicator()
+
+    def on_recording_failed(self, session_id, error_message):
+        """Handle recording failed event."""
+        if hasattr(self, 'recording_status_widget'):
+            self.recording_status_widget.remove_recording(session_id)
+        self.status_manager.show_error(f"Recording failed: {error_message}")
+
+    def update_recording_status_indicator(self):
+        """Update the recording status indicator in the status bar."""
+        if not hasattr(self, 'recording_status_widget') or not hasattr(self, 'status_manager'):
+            return
+
+        active_count = self.recording_status_widget.get_active_count()
+
+        if active_count > 0:
+            status_text = f"🔴 Recording ({active_count})"
+            self.status_manager.show_persistent_info(status_text)
+        else:
+            self.status_manager.clear_persistent_info()
 
     def update_current_playlist(self):
         """Manually trigger update of current playlist."""

@@ -1,5 +1,5 @@
 from PySide6.QtCore import QRect, Qt, QTimer, Signal, QThread, QUrl
-from PySide6.QtGui import QFontMetrics, QPainter, QPalette, QPixmap
+from PySide6.QtGui import QFontMetrics, QPainter, QPalette, QPixmap, QAction
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QScrollBar,
     QVBoxLayout,
     QWidget,
+    QMenu,
 )
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 import os
@@ -71,6 +72,7 @@ class EnhancedChannelList(QWidget):
 
     channel_selected = Signal(dict)  # Emits channel info dict
     channel_activated = Signal(dict)  # Emits channel info dict (double-click)
+    recording_requested = Signal(dict)  # Emits channel info dict for recording
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -456,6 +458,8 @@ class EnhancedChannelViewport(QFrame):
         """Handle mouse clicks."""
         if event.button() == Qt.LeftButton:
             self._handle_click(event.pos())
+        elif event.button() == Qt.RightButton:
+            self._show_context_menu(event.pos())
 
     def mouseDoubleClickEvent(self, event):
         """Handle double clicks."""
@@ -488,6 +492,44 @@ class EnhancedChannelViewport(QFrame):
         y = pos.y()
         relative_index = y // self.parent_list.item_height
         return self.parent_list.visible_start_index + relative_index
+
+    def _show_context_menu(self, pos):
+        """Show context menu for channel operations."""
+        index = self._get_index_at_position(pos)
+        if not (0 <= index < len(self.parent_list._filtered_channels)):
+            return
+
+        channel = self.parent_list._filtered_channels[index]
+
+        # Create context menu
+        menu = QMenu(self)
+
+        # Play action
+        play_action = QAction("▶️ Play Channel", self)
+        play_action.triggered.connect(lambda: self.parent_list.channel_activated.emit(channel))
+        menu.addAction(play_action)
+
+        menu.addSeparator()
+
+        # Recording action
+        record_action = QAction("🔴 Start Recording", self)
+        record_action.triggered.connect(lambda: self.parent_list.recording_requested.emit(channel))
+        menu.addAction(record_action)
+
+        # Channel info action
+        info_action = QAction("ℹ️ Channel Info", self)
+        info_action.triggered.connect(lambda: self._show_channel_info(channel))
+        menu.addAction(info_action)
+
+        # Show menu at cursor position
+        global_pos = self.mapToGlobal(pos)
+        menu.exec(global_pos)
+
+    def _show_channel_info(self, channel):
+        """Show channel information dialog."""
+        # This could be expanded to show a detailed info dialog
+        # For now, just select the channel
+        self.parent_list.channel_selected.emit(channel)
 
     def wheelEvent(self, event):
         """Handle mouse wheel scrolling."""
