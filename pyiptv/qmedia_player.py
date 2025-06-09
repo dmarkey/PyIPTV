@@ -15,27 +15,50 @@ class QMediaVideoPlayer(QObject):
         """
         super().__init__()
 
-        self.player = QMediaPlayer()
+        try:
+            print("🎵 Creating QMediaPlayer...")
+            self.player = QMediaPlayer()
+            print("   ✅ QMediaPlayer created")
 
-        self.video_widget = video_widget  # Assign video_widget first
+            self.video_widget = video_widget  # Assign video_widget first
 
-        # Initialize QAudioOutput with the simplest constructor to avoid Pylance issues.
-        # We will rely on Qt's default format negotiation.
-        self.audio_output = QAudioOutput()
-        print("Initialized QAudioOutput with default constructor.")
+            # Initialize QAudioOutput with the simplest constructor to avoid Pylance issues.
+            # We will rely on Qt's default format negotiation.
+            print("🔊 Creating QAudioOutput...")
+            self.audio_output = QAudioOutput()
+            print("   ✅ QAudioOutput created with default constructor")
 
-        # Set up audio output for the player
-        self.player.setAudioOutput(self.audio_output)
+            # Set up audio output for the player
+            print("🔗 Connecting audio output to player...")
+            self.player.setAudioOutput(self.audio_output)
+            print("   ✅ Audio output connected")
+
+        except Exception as e:
+            print(f"❌ Error in QMediaVideoPlayer.__init__: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
 
         if self.video_widget:
-            # Configure video widget for better compatibility
             try:
-                # Set aspect ratio mode to keep aspect ratio (avoid scaling artifacts)
-                self.video_widget.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
-            except (ImportError, AttributeError):
-                pass
+                print("📺 Setting up video widget...")
+                # Configure video widget for better compatibility
+                try:
+                    # Set aspect ratio mode to keep aspect ratio (avoid scaling artifacts)
+                    self.video_widget.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
+                    print("   ✅ Aspect ratio mode set")
+                except (ImportError, AttributeError) as e:
+                    print(f"   ⚠️ Could not set aspect ratio mode: {e}")
 
-            self.player.setVideoOutput(self.video_widget)
+                print("🔗 Connecting video output to player...")
+                self.player.setVideoOutput(self.video_widget)
+                print("   ✅ Video output connected")
+
+            except Exception as e:
+                print(f"❌ Error setting up video widget: {e}")
+                import traceback
+                traceback.print_exc()
+                raise
 
         # Connect error handling
         self.player.errorOccurred.connect(self._handle_error)

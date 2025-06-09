@@ -43,6 +43,8 @@ class SettingsManager:
         "cached_geolocation": None,  # Cached location data
         "max_search_results": 50000,  # Limit search results for performance
         "enable_channel_icons": False,  # Disable icons for large files by default
+        "disable_subtitle_detection_for_live": True,  # Skip subtitle detection for live streams
+        "disable_hardware_acceleration": False,  # Disable hardware video acceleration (fixes monitor issues)
     }
 
     def __init__(self, settings_filename="pyiptv_settings.json"):

@@ -112,6 +112,18 @@ class SettingsDialog(QDialog):
         )
         self.main_layout.addWidget(self.auto_play_checkbox)
 
+        # Hardware acceleration setting
+        self.hw_accel_checkbox = QCheckBox(
+            "Disable hardware acceleration (fixes monitor issues)"
+        )
+        self.hw_accel_checkbox.setChecked(
+            self.settings_manager.get_setting("disable_hardware_acceleration", False)
+        )
+        self.hw_accel_checkbox.setToolTip(
+            "Disable hardware video acceleration if your monitor goes offline during playback. Requires restart."
+        )
+        self.main_layout.addWidget(self.hw_accel_checkbox)
+
         # Hidden Categories (placeholder - more complex UI needed for managing this)
         self.hidden_cat_label = QLabel("Hidden Categories (comma-separated):")
         hidden_cats_list = self.settings_manager.get_setting("hidden_categories")
@@ -158,6 +170,20 @@ class SettingsDialog(QDialog):
         self.settings_manager.set_setting(
             "auto_play_last", self.auto_play_checkbox.isChecked()
         )
+
+        # Save hardware acceleration setting
+        old_hw_accel = self.settings_manager.get_setting("disable_hardware_acceleration", False)
+        new_hw_accel = self.hw_accel_checkbox.isChecked()
+        self.settings_manager.set_setting("disable_hardware_acceleration", new_hw_accel)
+
+        # Show restart message if hardware acceleration setting changed
+        if old_hw_accel != new_hw_accel:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self,
+                "Restart Required",
+                "Hardware acceleration setting changed. Please restart PyIPTV for the change to take effect."
+            )
 
         hidden_cats_str = self.hidden_cat_input.text()
         hidden_cats_list = [
@@ -452,33 +478,58 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon(ICON_APP))
 
     def init_player(self):
-        # Initialize QMediaPlayer with video widget
-        self.player = QMediaVideoPlayer(self.video_widget)
+        try:
+            print("🎬 Initializing video player...")
 
-        # Connect control bar audio track selector to player
-        self.control_bar.set_media_player(self.player)
+            # Initialize QMediaPlayer with video widget
+            print("   Creating QMediaVideoPlayer...")
+            self.player = QMediaVideoPlayer(self.video_widget)
+            print("   ✅ QMediaVideoPlayer created successfully")
 
-        # Connect to player error signal
-        if hasattr(self.player, "playback_error_occurred"):
-            self.player.playback_error_occurred.connect(self._on_playback_error)
+            # Connect control bar audio track selector to player
+            print("   Connecting control bar to player...")
+            self.control_bar.set_media_player(self.player)
+            print("   ✅ Control bar connected")
 
-        # Connect to metadata updates
-        if hasattr(self.player, "metadata_updated"):
-            self.player.metadata_updated.connect(self._on_metadata_updated)
+            # Connect to player error signal
+            print("   Connecting error signals...")
+            if hasattr(self.player, "playback_error_occurred"):
+                self.player.playback_error_occurred.connect(self._on_playback_error)
+                print("   ✅ Error signal connected")
 
-        # Timer to update UI based on player state (e.g., play/pause icon)
-        self.player_state_timer = QTimer(self)
-        self.player_state_timer.timeout.connect(self.update_player_ui_state)
-        self.player_state_timer.start(
-            250
-        )  # More frequent updates for smoother progress
+            # Connect to metadata updates
+            print("   Connecting metadata signals...")
+            if hasattr(self.player, "metadata_updated"):
+                self.player.metadata_updated.connect(self._on_metadata_updated)
+                print("   ✅ Metadata signal connected")
 
-        # Set initial volume from settings
-        initial_volume = self.settings_manager.get_setting("volume")
-        self.player.set_volume(initial_volume)
-        self.control_bar.set_volume(initial_volume)
+            # Timer to update UI based on player state (e.g., play/pause icon)
+            print("   Setting up player state timer...")
+            self.player_state_timer = QTimer(self)
+            self.player_state_timer.timeout.connect(self.update_player_ui_state)
+            self.player_state_timer.start(250)  # More frequent updates for smoother progress
+            print("   ✅ Player state timer started")
 
-        print("QMediaPlayer initialized successfully")
+            # Set initial volume from settings
+            print("   Setting initial volume...")
+            initial_volume = self.settings_manager.get_setting("volume")
+            self.player.set_volume(initial_volume)
+            self.control_bar.set_volume(initial_volume)
+            print(f"   ✅ Initial volume set to {initial_volume}")
+
+            print("🎉 QMediaPlayer initialized successfully")
+
+        except Exception as e:
+            print(f"❌ Error initializing player: {e}")
+            import traceback
+            traceback.print_exc()
+
+            # Show error to user
+            if hasattr(self, 'status_manager'):
+                self.status_manager.show_error(f"Failed to initialize video player: {str(e)}")
+
+            # Create a dummy player to prevent further crashes
+            self.player = None
 
     def init_subtitles(self):
         """Initialize subtitle management system."""
@@ -1025,19 +1076,94 @@ class MainWindow(QMainWindow):
         if channel_info:
             self.play_channel(channel_info)
 
+    def _is_live_stream(self, channel_info):
+        """
+        Determine if a channel is a live stream.
+
+        Args:
+            channel_info: Channel dictionary with metadata
+
+        Returns:
+            bool: True if the channel is a live stream, False otherwise
+        """
+        if not channel_info:
+            return True  # Default to live stream if no info available
+
+        # Check content type set by M3U parser
+        content_type = channel_info.get("content_type", "").lower()
+        if content_type == "live":
+            return True
+        elif content_type in ["movie", "series"]:
+            return False
+
+        # Fallback: Check URL patterns for live streams
+        url = channel_info.get("url", "")
+        if url:
+            # Common live stream URL patterns
+            live_patterns = [
+                "/live/",
+                "/stream/",
+                "/play/live",
+                ".m3u8",
+                "/hls/",
+                "/dash/",
+                ":8080/",  # Common IPTV port
+                "/get.php",
+                "/play.php"
+            ]
+
+            # Check if URL contains live stream indicators
+            url_lower = url.lower()
+            for pattern in live_patterns:
+                if pattern in url_lower:
+                    return True
+
+        # Check channel name for live indicators
+        name = channel_info.get("name", "").lower()
+        live_name_patterns = ["live", "tv", "channel", "news", "sport"]
+        for pattern in live_name_patterns:
+            if pattern in name:
+                return True
+
+        # Default to live stream if uncertain
+        return True
+
     def play_channel(self, channel_info):
         url = channel_info.get("url")
         if url:
-            self.status_manager.show_info(f"Playing: {channel_info.get('name', url)}")
-            buffering_ms = self.settings_manager.get_setting("buffering_ms")
+            try:
+                print(f"🎬 Playing channel: {channel_info.get('name', 'Unknown')}")
+                print(f"   URL: {url}")
 
-            # Switch to video widget and show loading state
-            self.video_stack.setCurrentIndex(1)
-            self.show_loading_state(True)
+                # Check if player is available
+                if not self.player:
+                    self.status_manager.show_error("Video player not initialized. Cannot play media.")
+                    return
 
-            buffering_ms = buffering_ms or 1500  # Default fallback
-            self.player.play_media(url, buffering_ms=buffering_ms)
-            self.settings_manager.set_setting("last_played_url", url)
+                # Store current channel info for subtitle detection
+                self._current_channel_info = channel_info
+
+                self.status_manager.show_info(f"Playing: {channel_info.get('name', url)}")
+                buffering_ms = self.settings_manager.get_setting("buffering_ms")
+
+                # Switch to video widget and show loading state
+                print("   Switching to video widget...")
+                self.video_stack.setCurrentIndex(1)
+                self.show_loading_state(True)
+
+                buffering_ms = buffering_ms or 1500  # Default fallback
+                print(f"   Starting playback with {buffering_ms}ms buffering...")
+                self.player.play_media(url, buffering_ms=buffering_ms)
+                self.settings_manager.set_setting("last_played_url", url)
+                print("   ✅ Playback started successfully")
+
+            except Exception as e:
+                print(f"❌ Error playing channel: {e}")
+                import traceback
+                traceback.print_exc()
+                self.status_manager.show_error(f"Failed to play channel: {str(e)}")
+                self.video_stack.setCurrentIndex(0)  # Show placeholder on error
+                return
 
             # Notify control bar audio track selector that new media is loaded
             self.control_bar.on_media_loaded()
@@ -1054,7 +1180,11 @@ class MainWindow(QMainWindow):
                 self.channel_info_bar.update_channel_info(channel_info)
 
             # Detect embedded subtitle tracks for the new media and auto-activate
-            if hasattr(self, 'subtitle_manager'):
+            # Skip subtitle detection for live streams if the setting is enabled
+            should_skip_live = self.settings_manager.get_setting("disable_subtitle_detection_for_live", True)
+            is_live = self._is_live_stream(channel_info)
+
+            if hasattr(self, 'subtitle_manager') and not (should_skip_live and is_live):
                 try:
                     embedded_tracks = self.subtitle_manager.detect_embedded_tracks(url)
                     if embedded_tracks:
@@ -1080,6 +1210,8 @@ class MainWindow(QMainWindow):
 
                 except Exception as e:
                     print(f"Error detecting embedded tracks: {e}")
+            elif hasattr(self, 'subtitle_manager') and should_skip_live and is_live:
+                print(f"Skipping subtitle detection for live stream: {channel_info.get('name', 'Unknown')}")
 
             # Hide loading state after a short delay
             QTimer.singleShot(2000, lambda: self.show_loading_state(False))
@@ -1240,6 +1372,14 @@ class MainWindow(QMainWindow):
     def detect_embedded_subtitles(self):
         """Manually detect embedded subtitle tracks in current media."""
         if hasattr(self, 'subtitle_manager') and self.player.current_url:
+            # Check if subtitle detection should be skipped for live streams
+            should_skip_live = self.settings_manager.get_setting("disable_subtitle_detection_for_live", True)
+            current_channel = getattr(self, '_current_channel_info', None)
+
+            if should_skip_live and current_channel and self._is_live_stream(current_channel):
+                self.status_manager.show_info("Subtitle detection skipped for live streams", timeout=2000)
+                return
+
             try:
                 embedded_tracks = self.subtitle_manager.detect_embedded_tracks(self.player.current_url)
                 if embedded_tracks:
@@ -1271,9 +1411,15 @@ class MainWindow(QMainWindow):
                 self.subtitle_control.show()
                 self.status_manager.show_info("Subtitle panel shown", timeout=1500)
 
-                # Auto-detect embedded tracks when panel is opened
+                # Auto-detect embedded tracks when panel is opened (only for non-live streams if setting enabled)
                 if self.player.current_url:
-                    self.detect_embedded_subtitles()
+                    should_skip_live = self.settings_manager.get_setting("disable_subtitle_detection_for_live", True)
+                    current_channel = getattr(self, '_current_channel_info', None)
+
+                    if should_skip_live and current_channel and self._is_live_stream(current_channel):
+                        self.status_manager.show_info("Live streams typically don't have embedded subtitles", timeout=2000)
+                    else:
+                        self.detect_embedded_subtitles()
         else:
             self.status_manager.show_info("Subtitle system not available", timeout=2000)
 

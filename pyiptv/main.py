@@ -53,9 +53,18 @@ def main():
     if hasattr(Qt.ApplicationAttribute, "AA_UseHighDpiPixmaps"):
         app.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
 
-    # Use desktop OpenGL for better compatibility
-    if hasattr(Qt.ApplicationAttribute, "AA_UseDesktopOpenGL"):
-        app.setAttribute(Qt.ApplicationAttribute.AA_UseDesktopOpenGL, True)
+    # Check hardware acceleration setting
+    settings_manager = SettingsManager()
+    disable_hw_accel = settings_manager.get_setting("disable_hardware_acceleration", False)
+
+    if disable_hw_accel:
+        # Force software rendering to prevent monitor issues
+        os.environ["QT_OPENGL"] = "software"
+        print("Hardware acceleration disabled - using software rendering")
+    else:
+        # Use desktop OpenGL for better compatibility
+        if hasattr(Qt.ApplicationAttribute, "AA_UseDesktopOpenGL"):
+            app.setAttribute(Qt.ApplicationAttribute.AA_UseDesktopOpenGL, True)
 
     # Initialize settings and theme manager
     settings_manager = SettingsManager()
