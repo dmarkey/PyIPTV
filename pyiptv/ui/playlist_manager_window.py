@@ -2,39 +2,38 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from PySide6.QtWidgets import (
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QPushButton,
-    QListWidget,
-    QLabel,
-    QDialog,
-    QDialogButtonBox,
-    QLineEdit,
-    QFileDialog,
-    QMessageBox,
-    QProgressDialog,
-    QFrame,
-    QListWidgetItem,
-    QStyledItemDelegate,
-    QApplication,
-    QMenu,
-    QGroupBox,
-    QFormLayout,
-    QRadioButton,
-    QButtonGroup,
-    QInputDialog,
-    QStyle,
-)
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QColor, QPalette
-from PySide6.QtCore import QRect, QByteArray
-from PySide6.QtGui import QIcon
 from urllib.parse import urlparse
 
-from pyiptv.playlist_manager import PlaylistManager, PlaylistEntry
+from PySide6.QtCore import QByteArray, QRect, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QIcon, QPalette
+from PySide6.QtWidgets import (
+    QApplication,
+    QButtonGroup,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QFormLayout,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QProgressDialog,
+    QPushButton,
+    QRadioButton,
+    QStyle,
+    QStyledItemDelegate,
+    QVBoxLayout,
+    QWidget,
+)
+
+from pyiptv.playlist_manager import PlaylistEntry, PlaylistManager
 from pyiptv.settings_manager import SettingsManager
 from pyiptv.ui.url_download_worker import URLDownloadWorker
 

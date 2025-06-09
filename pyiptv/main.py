@@ -1,14 +1,16 @@
-import sys
 import os
 import signal
+import sys
 from pathlib import Path
-from PySide6.QtWidgets import QApplication
-from PySide6.QtGui import QIcon
+
 from PySide6.QtCore import Qt, QTimer
-from pyiptv.ui.main_window import MainWindow
-from pyiptv.ui.themes import ThemeManager
-from pyiptv.ui.playlist_manager_window import PlaylistManagerWindow
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import QApplication
+
 from pyiptv.settings_manager import SettingsManager
+from pyiptv.ui.main_window import MainWindow
+from pyiptv.ui.playlist_manager_window import PlaylistManagerWindow
+from pyiptv.ui.themes import ThemeManager
 
 os.environ["LIBVA_DRIVER_NAME"] = "i965"  # Software VA-API
 
@@ -51,9 +53,18 @@ def main():
     if hasattr(Qt.ApplicationAttribute, "AA_UseHighDpiPixmaps"):
         app.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
 
-    # Use desktop OpenGL for better compatibility
-    if hasattr(Qt.ApplicationAttribute, "AA_UseDesktopOpenGL"):
-        app.setAttribute(Qt.ApplicationAttribute.AA_UseDesktopOpenGL, True)
+    # Check hardware acceleration setting
+    settings_manager = SettingsManager()
+    disable_hw_accel = settings_manager.get_setting("disable_hardware_acceleration", False)
+
+    if disable_hw_accel:
+        # Force software rendering to prevent monitor issues
+        os.environ["QT_OPENGL"] = "software"
+        print("Hardware acceleration disabled - using software rendering")
+    else:
+        # Use desktop OpenGL for better compatibility
+        if hasattr(Qt.ApplicationAttribute, "AA_UseDesktopOpenGL"):
+            app.setAttribute(Qt.ApplicationAttribute.AA_UseDesktopOpenGL, True)
 
     # Initialize settings and theme manager
     settings_manager = SettingsManager()

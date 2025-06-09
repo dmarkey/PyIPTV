@@ -1,42 +1,51 @@
+import os
 import sys
+import time
+from pathlib import Path
+
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QAction, QIcon, QKeySequence, QShortcut
+from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
-    QPushButton,
+    QLabel,
     QLineEdit,
     QListWidget,
-    QLabel,
-    QSplitter,
-    QFileDialog,
-    QSizePolicy,
-    QMessageBox,
-    QDialog,
-    QCheckBox,
     QListWidgetItem,
-    QApplication,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QSizePolicy,
+    QSplitter,
     QStackedWidget,
-    QGraphicsOpacityEffect,
-    QComboBox,
+    QVBoxLayout,
+    QWidget,
 )
-from PySide6.QtGui import QIcon, QKeySequence, QAction, QShortcut
-from PySide6.QtCore import Qt, QTimer
-from pyiptv.ui.themes import ThemeManager
-from pyiptv.ui.playlist_manager_window import PlaylistManagerWindow
 
+from pyiptv.playlist_manager import PlaylistManager
 from pyiptv.qmedia_player import QMediaVideoPlayer
 from pyiptv.settings_manager import SettingsManager
-from pyiptv.playlist_manager import PlaylistManager
-from pyiptv.ui.components.virtualized_channel_list import VirtualizedChannelList
-from pyiptv.ui.components.video_placeholder import VideoPlaceholder
 from pyiptv.ui.components.enhanced_controls import EnhancedControlBar
-from pyiptv.ui.components.unified_status_system import UnifiedStatusBar, StatusManager
 from pyiptv.ui.components.simplified_operations import SimplifiedOperationManager
-from pyiptv.ui.themes import ModernDarkTheme
-from PySide6.QtMultimediaWidgets import QVideoWidget
-import os
-from pathlib import Path
+from pyiptv.ui.components.unified_status_system import StatusManager, UnifiedStatusBar
+from pyiptv.ui.components.video_placeholder import VideoPlaceholder
+from pyiptv.ui.components.enhanced_channel_list import EnhancedChannelList
+from pyiptv.ui.components.channel_info_display import ChannelInfoDisplay, SimpleChannelInfoBar
+from pyiptv.ui.components.subtitle_widget import SubtitleDisplayWidget, SubtitleControlWidget
+from pyiptv.ui.components.recording_status_widget import RecordingStatusWidget
+from pyiptv.ui.playlist_manager_window import PlaylistManagerWindow
+from pyiptv.ui.themes import ModernDarkTheme, ThemeManager
+from pyiptv.subtitle_manager import SubtitleManager
+from pyiptv.recording_manager import RecordingManager
+from pyiptv.link_validator import DeadLinkManager
+from pyiptv.auto_updater import M3UAutoSaver, PlaylistAutoUpdater
+from pyiptv.enhanced_subtitle_manager import EnhancedSubtitleManager
 
 # Get the directory containing this file
 _CURRENT_DIR = Path(__file__).parent
@@ -103,6 +112,40 @@ class SettingsDialog(QDialog):
         )
         self.main_layout.addWidget(self.auto_play_checkbox)
 
+        # Hardware acceleration setting
+        self.hw_accel_checkbox = QCheckBox(
+            "Disable hardware acceleration (fixes monitor issues)"
+        )
+        self.hw_accel_checkbox.setChecked(
+            self.settings_manager.get_setting("disable_hardware_acceleration", False)
+        )
+        self.hw_accel_checkbox.setToolTip(
+            "Disable hardware video acceleration if your monitor goes offline during playback. Requires restart."
+        )
+        self.main_layout.addWidget(self.hw_accel_checkbox)
+
+        # Network timeout setting
+        self.timeout_label = QLabel("Network Timeout (seconds):")
+        self.timeout_input = QLineEdit(
+            str(self.settings_manager.get_setting("network_timeout_seconds", 30))
+        )
+        self.timeout_input.setToolTip(
+            "Timeout for network connections. Increase for slow/unstable connections."
+        )
+        self.main_layout.addWidget(self.timeout_label)
+        self.main_layout.addWidget(self.timeout_input)
+
+        # Max retries setting
+        self.retries_label = QLabel("Connection Retries:")
+        self.retries_input = QLineEdit(
+            str(self.settings_manager.get_setting("max_retries", 3))
+        )
+        self.retries_input.setToolTip(
+            "Number of times to retry failed connections. Higher values for unstable networks."
+        )
+        self.main_layout.addWidget(self.retries_label)
+        self.main_layout.addWidget(self.retries_input)
+
         # Hidden Categories (placeholder - more complex UI needed for managing this)
         self.hidden_cat_label = QLabel("Hidden Categories (comma-separated):")
         hidden_cats_list = self.settings_manager.get_setting("hidden_categories")
@@ -146,9 +189,46 @@ class SettingsDialog(QDialog):
             )
             return
 
+        # Save network settings
+        try:
+            timeout_seconds = int(self.timeout_input.text())
+            if timeout_seconds < 1:
+                raise ValueError("Timeout must be at least 1 second.")
+            self.settings_manager.set_setting("network_timeout_seconds", timeout_seconds)
+        except ValueError:
+            QMessageBox.warning(
+                self, "Invalid Input", "Network timeout must be a valid integer (minimum 1)."
+            )
+            return
+
+        try:
+            max_retries = int(self.retries_input.text())
+            if max_retries < 0:
+                raise ValueError("Retries must be non-negative.")
+            self.settings_manager.set_setting("max_retries", max_retries)
+        except ValueError:
+            QMessageBox.warning(
+                self, "Invalid Input", "Max retries must be a valid integer."
+            )
+            return
+
         self.settings_manager.set_setting(
             "auto_play_last", self.auto_play_checkbox.isChecked()
         )
+
+        # Save hardware acceleration setting
+        old_hw_accel = self.settings_manager.get_setting("disable_hardware_acceleration", False)
+        new_hw_accel = self.hw_accel_checkbox.isChecked()
+        self.settings_manager.set_setting("disable_hardware_acceleration", new_hw_accel)
+
+        # Show restart message if hardware acceleration setting changed
+        if old_hw_accel != new_hw_accel:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self,
+                "Restart Required",
+                "Hardware acceleration setting changed. Please restart PyIPTV for the change to take effect."
+            )
 
         hidden_cats_str = self.hidden_cat_input.text()
         hidden_cats_list = [
@@ -202,7 +282,12 @@ class MainWindow(QMainWindow):
 
         self.init_ui()
         self.init_player()
+        self.init_subtitles()
+        self.init_enhanced_features()
         self.setup_shortcuts()
+
+        # Check and setup FFmpeg if needed
+        self.check_ffmpeg_setup()
 
         self.load_initial_m3u()
         self.restore_geometry()
@@ -252,10 +337,80 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        ffmpeg_setup_action = QAction("Setup &FFmpeg...", self)
+        ffmpeg_setup_action.triggered.connect(self.manual_ffmpeg_setup)
+        file_menu.addAction(ffmpeg_setup_action)
+
+        file_menu.addSeparator()
+
         exit_action = QAction(QIcon.fromTheme("application-exit"), "&Exit", self)
         exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
+
+        # --- View Menu ---
+        view_menu = menubar.addMenu("&View")
+
+        subtitle_panel_action = QAction("&Subtitle Controls...", self)
+        subtitle_panel_action.setShortcut("Ctrl+T")
+        subtitle_panel_action.triggered.connect(self.toggle_subtitle_panel)
+        view_menu.addAction(subtitle_panel_action)
+
+        # --- Tools Menu ---
+        tools_menu = menubar.addMenu("&Tools")
+
+        # Recording actions
+        record_action = QAction("Start &Recording", self)
+        record_action.setShortcut("Ctrl+R")
+        record_action.triggered.connect(self.start_recording_current_channel)
+        tools_menu.addAction(record_action)
+
+        tools_menu.addSeparator()
+
+        # Link validation actions
+        validate_links_action = QAction("&Validate All Links", self)
+        validate_links_action.setShortcut("Ctrl+V")
+        validate_links_action.triggered.connect(self.validate_all_links)
+        tools_menu.addAction(validate_links_action)
+
+        # Auto-update actions
+        update_playlist_action = QAction("&Update Current Playlist", self)
+        update_playlist_action.setShortcut("F5")
+        update_playlist_action.triggered.connect(self.update_current_playlist)
+        tools_menu.addAction(update_playlist_action)
+
+        tools_menu.addSeparator()
+
+        # Geolocation actions
+        refresh_location_action = QAction("Refresh &Location", self)
+        refresh_location_action.setShortcut("Ctrl+L")
+        refresh_location_action.triggered.connect(self.refresh_geolocation)
+        tools_menu.addAction(refresh_location_action)
+
+        show_location_action = QAction("Show Current &Location", self)
+        show_location_action.triggered.connect(self.show_current_location)
+        tools_menu.addAction(show_location_action)
+
+        tools_menu.addSeparator()
+
+        # Settings for enhanced features
+        enhanced_settings_action = QAction("Enhanced &Features Settings...", self)
+        enhanced_settings_action.triggered.connect(self.show_enhanced_settings)
+        tools_menu.addAction(enhanced_settings_action)
+
+        # --- Help Menu ---
+        help_menu = menubar.addMenu("&Help")
+
+        shortcuts_action = QAction("&Keyboard Shortcuts", self)
+        shortcuts_action.setShortcut("F1")
+        shortcuts_action.triggered.connect(self.show_keyboard_shortcuts_help)
+        help_menu.addAction(shortcuts_action)
+
+        help_menu.addSeparator()
+
+        about_action = QAction("&About PyIPTV", self)
+        about_action.triggered.connect(self.show_about_dialog)
+        help_menu.addAction(about_action)
 
         # --- Main Content Area (Splitter) ---
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -290,13 +445,19 @@ class MainWindow(QMainWindow):
         self.left_layout.addLayout(category_search_layout)
         self.left_layout.addWidget(self.category_list_widget)
 
-        # Channel List - Using virtualized widget for performance
+        # Channel List - Using enhanced widget with logo support
         self.channel_label = QLabel("Channels:")
-        self.channel_list_widget = VirtualizedChannelList()
+        self.channel_list_widget = EnhancedChannelList()
         self.channel_list_widget.channel_selected.connect(self.on_channel_selected)
         self.channel_list_widget.channel_activated.connect(self.on_channel_activated)
+        self.channel_list_widget.recording_requested.connect(self.on_recording_requested)
         self.left_layout.addWidget(self.channel_label)
         self.left_layout.addWidget(self.channel_list_widget)
+
+        # Recording Status Widget
+        self.recording_status_widget = RecordingStatusWidget()
+        self.recording_status_widget.stop_recording_requested.connect(self.stop_recording_by_id)
+        self.left_layout.addWidget(self.recording_status_widget)
 
         # Right Pane (Video Player and Controls)
         self.right_pane = QWidget()
@@ -338,10 +499,12 @@ class MainWindow(QMainWindow):
         self.control_bar = EnhancedControlBar()
         self.control_bar.play_pause_clicked.connect(self.toggle_play_pause)
         self.control_bar.stop_clicked.connect(self.stop_playback)
+        self.control_bar.record_clicked.connect(self.toggle_recording)
         self.control_bar.fullscreen_clicked.connect(self.toggle_fullscreen)
         self.control_bar.volume_changed.connect(self.on_volume_changed)
         self.control_bar.seek_requested.connect(self.on_seek_requested)
         self.control_bar.audio_track_changed.connect(self.on_audio_track_changed)
+        self.control_bar.subtitle_track_changed.connect(self.on_subtitle_track_changed)
 
         self.right_layout.addWidget(self.control_bar)
 
@@ -360,33 +523,200 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon(ICON_APP))
 
     def init_player(self):
-        # Initialize QMediaPlayer with video widget
-        self.player = QMediaVideoPlayer(self.video_widget)
+        try:
+            print("🎬 Initializing video player...")
 
-        # Connect control bar audio track selector to player
-        self.control_bar.set_media_player(self.player)
+            # Initialize QMediaPlayer with video widget
+            print("   Creating QMediaVideoPlayer...")
+            self.player = QMediaVideoPlayer(self.video_widget)
+            print("   ✅ QMediaVideoPlayer created successfully")
 
-        # Connect to player error signal
-        if hasattr(self.player, "playback_error_occurred"):
-            self.player.playback_error_occurred.connect(self._on_playback_error)
+            # Connect control bar audio track selector to player
+            print("   Connecting control bar to player...")
+            self.control_bar.set_media_player(self.player)
+            print("   ✅ Control bar connected")
 
-        # Connect to metadata updates
-        if hasattr(self.player, "metadata_updated"):
-            self.player.metadata_updated.connect(self._on_metadata_updated)
+            # Connect to player error signal
+            print("   Connecting error signals...")
+            if hasattr(self.player, "playback_error_occurred"):
+                self.player.playback_error_occurred.connect(self._on_playback_error)
+                print("   ✅ Error signal connected")
 
-        # Timer to update UI based on player state (e.g., play/pause icon)
-        self.player_state_timer = QTimer(self)
-        self.player_state_timer.timeout.connect(self.update_player_ui_state)
-        self.player_state_timer.start(
-            250
-        )  # More frequent updates for smoother progress
+            # Connect to metadata updates
+            print("   Connecting metadata signals...")
+            if hasattr(self.player, "metadata_updated"):
+                self.player.metadata_updated.connect(self._on_metadata_updated)
+                print("   ✅ Metadata signal connected")
 
-        # Set initial volume from settings
-        initial_volume = self.settings_manager.get_setting("volume")
-        self.player.set_volume(initial_volume)
-        self.control_bar.set_volume(initial_volume)
+            # Timer to update UI based on player state (e.g., play/pause icon)
+            print("   Setting up player state timer...")
+            self.player_state_timer = QTimer(self)
+            self.player_state_timer.timeout.connect(self.update_player_ui_state)
+            self.player_state_timer.start(250)  # More frequent updates for smoother progress
+            print("   ✅ Player state timer started")
 
-        print("QMediaPlayer initialized successfully")
+            # Set initial volume from settings
+            print("   Setting initial volume...")
+            initial_volume = self.settings_manager.get_setting("volume")
+            self.player.set_volume(initial_volume)
+            self.control_bar.set_volume(initial_volume)
+            print(f"   ✅ Initial volume set to {initial_volume}")
+
+            print("🎉 QMediaPlayer initialized successfully")
+
+        except Exception as e:
+            print(f"❌ Error initializing player: {e}")
+            import traceback
+            traceback.print_exc()
+
+            # Show error to user
+            if hasattr(self, 'status_manager'):
+                self.status_manager.show_error(f"Failed to initialize video player: {str(e)}")
+
+            # Create a dummy player to prevent further crashes
+            self.player = None
+
+    def init_subtitles(self):
+        """Initialize subtitle management system."""
+        # Create subtitle manager
+        self.subtitle_manager = SubtitleManager(self)
+
+        # Create subtitle display widget
+        self.subtitle_display = SubtitleDisplayWidget(self)
+        self.subtitle_display.hide()  # Initially hidden
+
+        # Create subtitle control widget
+        self.subtitle_control = SubtitleControlWidget(self.subtitle_manager, self)
+        self.subtitle_control.hide()  # Initially hidden
+
+        # Connect subtitle control signals
+        self.subtitle_control.track_changed.connect(self._on_subtitle_track_changed)
+
+        # Connect control bar subtitle track selector to subtitle manager
+        self.control_bar.set_subtitle_manager(self.subtitle_manager)
+
+        # Add subtitle control to the right layout (after control bar)
+        # We'll add it dynamically when toggled
+
+        # Create channel info display components
+        self.channel_info_overlay = ChannelInfoDisplay(self)
+        self.channel_info_bar = SimpleChannelInfoBar(self)
+
+        # Add channel info bar to the right layout (after control bar)
+        self.right_layout.addWidget(self.channel_info_bar)
+
+        # Connect subtitle manager signals
+        self.subtitle_manager.subtitle_text_updated.connect(
+            self.subtitle_display.update_subtitle_text
+        )
+
+        # Connect to player position updates for subtitle timing
+        if hasattr(self.player, 'position_changed'):
+            self.player.position_changed.connect(self._on_position_changed_for_subtitles)
+
+        print("Subtitle system initialized successfully")
+
+    def init_enhanced_features(self):
+        """Initialize enhanced features: recording, dead link detection, auto-updates, geolocation."""
+        # Initialize recording manager
+        self.recording_manager = RecordingManager(self.settings_manager)
+        self.recording_manager.recording_started.connect(self.on_recording_started)
+        self.recording_manager.recording_stopped.connect(self.on_recording_stopped)
+        self.recording_manager.recording_failed.connect(self.on_recording_failed)
+
+        # Initialize dead link manager
+        self.dead_link_manager = DeadLinkManager(self.settings_manager)
+        self.dead_link_manager.dead_links_detected.connect(self.on_dead_links_detected)
+        self.dead_link_manager.links_validated.connect(self.on_links_validated)
+        self.dead_link_manager.validation_progress.connect(self.on_validation_progress)
+
+        # Initialize auto-saver for M3U files
+        self.m3u_auto_saver = M3UAutoSaver(self.settings_manager)
+        self.m3u_auto_saver.file_saved.connect(self.on_m3u_file_saved)
+        self.m3u_auto_saver.save_failed.connect(self.on_m3u_save_failed)
+
+        # Initialize playlist auto-updater
+        self.playlist_auto_updater = PlaylistAutoUpdater(self.settings_manager, self.playlist_manager)
+        self.playlist_auto_updater.update_started.connect(self.on_playlist_update_started)
+        self.playlist_auto_updater.update_completed.connect(self.on_playlist_update_completed)
+        self.playlist_auto_updater.update_failed.connect(self.on_playlist_update_failed)
+
+        # Initialize enhanced subtitle manager with geolocation
+        self.enhanced_subtitle_manager = EnhancedSubtitleManager(self.settings_manager, self.subtitle_manager)
+        self.enhanced_subtitle_manager.subtitle_tracks_detected.connect(self.on_subtitle_tracks_detected)
+        self.enhanced_subtitle_manager.auto_track_selected.connect(self.on_auto_subtitle_selected)
+        self.enhanced_subtitle_manager.geolocation_status_changed.connect(self.on_geolocation_status_changed)
+
+        print("Enhanced features initialized successfully")
+
+        # Initialize recording button state
+        self.update_recording_status_indicator()
+
+    def check_ffmpeg_setup(self):
+        """Check if FFmpeg is available and setup if needed."""
+        from pyiptv.ffmpeg_manager import ffmpeg_manager
+
+        # Check if FFmpeg is already available
+        if ffmpeg_manager.check_system_ffmpeg() or ffmpeg_manager.is_ffmpeg_available():
+            print("✅ FFmpeg is available")
+            return
+
+        # Check if user has previously skipped setup
+        try:
+            skip_ffmpeg_setup = self.settings_manager.get_setting("skip_ffmpeg_setup")
+        except KeyError:
+            skip_ffmpeg_setup = False
+
+        if skip_ffmpeg_setup:
+            print("⚠️ FFmpeg setup was skipped - limited subtitle features")
+            return
+
+        # Show setup dialog
+        print("🔧 FFmpeg not found - showing setup dialog")
+        QTimer.singleShot(1000, self._show_ffmpeg_setup_dialog)  # Delay to let UI load
+
+    def _show_ffmpeg_setup_dialog(self):
+        """Show the FFmpeg setup dialog."""
+        from pyiptv.ui.components.ffmpeg_setup_dialog import show_ffmpeg_setup_dialog
+
+        try:
+            setup_completed = show_ffmpeg_setup_dialog(self)
+
+            if not setup_completed:
+                # User skipped setup
+                self.settings_manager.set_setting("skip_ffmpeg_setup", True)
+                self.status_manager.show_warning(
+                    "FFmpeg setup skipped - subtitle features will be limited"
+                )
+            else:
+                # Setup completed successfully
+                self.status_manager.show_success(
+                    "FFmpeg setup complete - all subtitle features available!"
+                )
+
+        except Exception as e:
+            print(f"Error in FFmpeg setup: {e}")
+            self.status_manager.show_error(f"FFmpeg setup failed: {str(e)}")
+
+    def manual_ffmpeg_setup(self):
+        """Manually run FFmpeg setup."""
+        from pyiptv.ui.components.ffmpeg_setup_dialog import show_ffmpeg_setup_dialog
+
+        try:
+            setup_completed = show_ffmpeg_setup_dialog(self)
+
+            if setup_completed:
+                # Reset the skip setting if setup was completed
+                self.settings_manager.set_setting("skip_ffmpeg_setup", False)
+                self.status_manager.show_success(
+                    "FFmpeg setup complete - all subtitle features available!"
+                )
+            else:
+                self.status_manager.show_info("FFmpeg setup cancelled")
+
+        except Exception as e:
+            print(f"Error in manual FFmpeg setup: {e}")
+            self.status_manager.show_error(f"FFmpeg setup failed: {str(e)}")
 
     def init_simplified_ux_system(self):
         """Initialize the simplified UX system with just status bar."""
@@ -407,29 +737,89 @@ class MainWindow(QMainWindow):
         self.is_busy = False
 
     def setup_shortcuts(self):
-        """Setup keyboard shortcuts for the application."""
-        # F11 or F for fullscreen toggle
+        """Setup comprehensive keyboard shortcuts for the application."""
+        # Playback controls
+        self.space_shortcut = QShortcut(QKeySequence("Space"), self)
+        self.space_shortcut.activated.connect(self.toggle_play_pause)
+
+        self.play_shortcut = QShortcut(QKeySequence("P"), self)
+        self.play_shortcut.activated.connect(self.toggle_play_pause)
+
+        self.stop_shortcut = QShortcut(QKeySequence("S"), self)
+        self.stop_shortcut.activated.connect(self.stop_playback)
+
+        # Volume controls
+        self.volume_up_shortcut = QShortcut(QKeySequence("Up"), self)
+        self.volume_up_shortcut.activated.connect(self.volume_up)
+
+        self.volume_down_shortcut = QShortcut(QKeySequence("Down"), self)
+        self.volume_down_shortcut.activated.connect(self.volume_down)
+
+        self.mute_shortcut = QShortcut(QKeySequence("M"), self)
+        self.mute_shortcut.activated.connect(self.toggle_mute)
+
+        # Channel navigation
+        self.next_channel_shortcut = QShortcut(QKeySequence("Right"), self)
+        self.next_channel_shortcut.activated.connect(self.next_channel)
+
+        self.prev_channel_shortcut = QShortcut(QKeySequence("Left"), self)
+        self.prev_channel_shortcut.activated.connect(self.previous_channel)
+
+        self.page_down_shortcut = QShortcut(QKeySequence("Page_Down"), self)
+        self.page_down_shortcut.activated.connect(self.channel_page_down)
+
+        self.page_up_shortcut = QShortcut(QKeySequence("Page_Up"), self)
+        self.page_up_shortcut.activated.connect(self.channel_page_up)
+
+        # Fullscreen controls
         self.fullscreen_shortcut = QShortcut(QKeySequence("F11"), self)
         self.fullscreen_shortcut.activated.connect(self.toggle_fullscreen)
 
         self.fullscreen_shortcut_f = QShortcut(QKeySequence("F"), self)
         self.fullscreen_shortcut_f.activated.connect(self.toggle_fullscreen)
 
-        # ESC to exit fullscreen
         self.escape_shortcut = QShortcut(QKeySequence("Escape"), self)
         self.escape_shortcut.activated.connect(self.exit_fullscreen)
 
-        # Ctrl+F to focus channel search
+        # Search and navigation
         self.channel_search_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
         self.channel_search_shortcut.activated.connect(self.focus_channel_search)
 
-        # Ctrl+Shift+F to focus category search
         self.category_search_shortcut = QShortcut(QKeySequence("Ctrl+Shift+F"), self)
         self.category_search_shortcut.activated.connect(self.focus_category_search)
 
-        # Space bar for play/pause
-        self.space_shortcut = QShortcut(QKeySequence("Space"), self)
-        self.space_shortcut.activated.connect(self.toggle_play_pause)
+        # Quick category selection (1-9)
+        for i in range(1, 10):
+            shortcut = QShortcut(QKeySequence(str(i)), self)
+            shortcut.activated.connect(
+                lambda idx=i - 1: self.select_category_by_index(idx)
+            )
+
+        # Application controls
+        self.refresh_shortcut = QShortcut(QKeySequence("F5"), self)
+        self.refresh_shortcut.activated.connect(self.refresh_playlist)
+
+        self.settings_shortcut = QShortcut(QKeySequence("Ctrl+,"), self)
+        self.settings_shortcut.activated.connect(self.open_settings_dialog)
+
+        self.help_shortcut = QShortcut(QKeySequence("F1"), self)
+        self.help_shortcut.activated.connect(self.show_keyboard_shortcuts_help)
+
+        self.help_shortcut_ctrl = QShortcut(QKeySequence("Ctrl+H"), self)
+        self.help_shortcut_ctrl.activated.connect(self.show_keyboard_shortcuts_help)
+
+        # Subtitle controls
+        self.subtitle_toggle_shortcut = QShortcut(QKeySequence("C"), self)
+        self.subtitle_toggle_shortcut.activated.connect(self.toggle_subtitles)
+
+        self.subtitle_load_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
+        self.subtitle_load_shortcut.activated.connect(self.load_subtitle_file)
+
+        self.subtitle_detect_shortcut = QShortcut(QKeySequence("Ctrl+D"), self)
+        self.subtitle_detect_shortcut.activated.connect(self.detect_embedded_subtitles)
+
+        self.subtitle_panel_shortcut = QShortcut(QKeySequence("Ctrl+T"), self)
+        self.subtitle_panel_shortcut.activated.connect(self.toggle_subtitle_panel)
 
     def _on_playback_error(self, error_message):
         """Handles playback errors signaled by the media player."""
@@ -717,9 +1107,12 @@ class MainWindow(QMainWindow):
         self.channel_list_widget.set_channels(channels_to_display)
 
     def on_channel_selected(self, channel_info):
-        """Handle channel selection in the virtualized list."""
+        """Handle channel selection in the enhanced list."""
         # This is called when a channel is selected (single click)
-        # We can show additional info in status bar or elsewhere
+        # Update the channel info bar
+        self.channel_info_bar.update_channel_info(channel_info)
+
+        # Show additional info in status bar
         channel_name = channel_info.get("name", "Unknown Channel")
         self.status_manager.show_info(f"Selected: {channel_name}", timeout=3000)
 
@@ -728,25 +1121,142 @@ class MainWindow(QMainWindow):
         if channel_info:
             self.play_channel(channel_info)
 
+    def _is_live_stream(self, channel_info):
+        """
+        Determine if a channel is a live stream.
+
+        Args:
+            channel_info: Channel dictionary with metadata
+
+        Returns:
+            bool: True if the channel is a live stream, False otherwise
+        """
+        if not channel_info:
+            return True  # Default to live stream if no info available
+
+        # Check content type set by M3U parser
+        content_type = channel_info.get("content_type", "").lower()
+        if content_type == "live":
+            return True
+        elif content_type in ["movie", "series"]:
+            return False
+
+        # Fallback: Check URL patterns for live streams
+        url = channel_info.get("url", "")
+        if url:
+            # Common live stream URL patterns
+            live_patterns = [
+                "/live/",
+                "/stream/",
+                "/play/live",
+                ".m3u8",
+                "/hls/",
+                "/dash/",
+                ":8080/",  # Common IPTV port
+                "/get.php",
+                "/play.php"
+            ]
+
+            # Check if URL contains live stream indicators
+            url_lower = url.lower()
+            for pattern in live_patterns:
+                if pattern in url_lower:
+                    return True
+
+        # Check channel name for live indicators
+        name = channel_info.get("name", "").lower()
+        live_name_patterns = ["live", "tv", "channel", "news", "sport"]
+        for pattern in live_name_patterns:
+            if pattern in name:
+                return True
+
+        # Default to live stream if uncertain
+        return True
+
     def play_channel(self, channel_info):
         url = channel_info.get("url")
         if url:
-            self.status_manager.show_info(f"Playing: {channel_info.get('name', url)}")
-            buffering_ms = self.settings_manager.get_setting("buffering_ms")
+            try:
+                print(f"🎬 Playing channel: {channel_info.get('name', 'Unknown')}")
+                print(f"   URL: {url}")
 
-            # Switch to video widget and show loading state
-            self.video_stack.setCurrentIndex(1)
-            self.show_loading_state(True)
+                # Check if player is available
+                if not self.player:
+                    self.status_manager.show_error("Video player not initialized. Cannot play media.")
+                    return
 
-            buffering_ms = buffering_ms or 1500  # Default fallback
-            self.player.play_media(url, buffering_ms=buffering_ms)
-            self.settings_manager.set_setting("last_played_url", url)
+                # Store current channel info for subtitle detection
+                self._current_channel_info = channel_info
+
+                self.status_manager.show_info(f"Playing: {channel_info.get('name', url)}")
+                buffering_ms = self.settings_manager.get_setting("buffering_ms")
+
+                # Switch to video widget and show loading state
+                print("   Switching to video widget...")
+                self.video_stack.setCurrentIndex(1)
+                self.show_loading_state(True)
+
+                buffering_ms = buffering_ms or 1500  # Default fallback
+                print(f"   Starting playback with {buffering_ms}ms buffering...")
+                self.player.play_media(url, buffering_ms=buffering_ms)
+                self.settings_manager.set_setting("last_played_url", url)
+                print("   ✅ Playback started successfully")
+
+            except Exception as e:
+                print(f"❌ Error playing channel: {e}")
+                import traceback
+                traceback.print_exc()
+                self.status_manager.show_error(f"Failed to play channel: {str(e)}")
+                self.video_stack.setCurrentIndex(0)  # Show placeholder on error
+                return
 
             # Notify control bar audio track selector that new media is loaded
             self.control_bar.on_media_loaded()
 
             # Update UI
             self.control_bar.update_play_state(True)
+
+            # Show channel info overlay
+            if hasattr(self, 'channel_info_overlay'):
+                self.channel_info_overlay.show_channel_info(channel_info, duration_ms=5000)
+
+            # Update channel info bar
+            if hasattr(self, 'channel_info_bar'):
+                self.channel_info_bar.update_channel_info(channel_info)
+
+            # Detect embedded subtitle tracks for the new media and auto-activate
+            # Skip subtitle detection for live streams if the setting is enabled
+            should_skip_live = self.settings_manager.get_setting("disable_subtitle_detection_for_live", True)
+            is_live = self._is_live_stream(channel_info)
+
+            if hasattr(self, 'subtitle_manager') and not (should_skip_live and is_live):
+                try:
+                    embedded_tracks = self.subtitle_manager.detect_embedded_tracks(url)
+                    if embedded_tracks:
+                        self.status_manager.show_info(
+                            f"Detected {len(embedded_tracks)} embedded subtitle tracks",
+                            timeout=3000
+                        )
+
+                        # Auto-activate the first available subtitle track
+                        if embedded_tracks:
+                            first_track = embedded_tracks[0]
+                            success = self.subtitle_manager.set_embedded_track(first_track.id)
+                            if success:
+                                self.status_manager.show_info(
+                                    f"Auto-activated: {first_track.display_name}",
+                                    timeout=2000
+                                )
+                                self._activate_embedded_subtitle_in_player(first_track)
+
+                        # Refresh subtitle tracks in control bar
+                        if hasattr(self.control_bar, 'refresh_subtitle_tracks'):
+                            QTimer.singleShot(3500, self.control_bar.refresh_subtitle_tracks)
+
+                except Exception as e:
+                    print(f"Error detecting embedded tracks: {e}")
+            elif hasattr(self, 'subtitle_manager') and should_skip_live and is_live:
+                print(f"Skipping subtitle detection for live stream: {channel_info.get('name', 'Unknown')}")
 
             # Hide loading state after a short delay
             QTimer.singleShot(2000, lambda: self.show_loading_state(False))
@@ -786,6 +1296,485 @@ class MainWindow(QMainWindow):
 
         self.status_manager.show_info("Stopped", timeout=2000)
 
+    def volume_up(self):
+        """Increase volume by 5%."""
+        current_volume = self.control_bar.volume_slider.value()
+        new_volume = min(100, current_volume + 5)
+        self.control_bar.set_volume(new_volume)
+        self.on_volume_changed(new_volume)
+        self.status_manager.show_info(f"Volume: {new_volume}%", timeout=1500)
+
+    def volume_down(self):
+        """Decrease volume by 5%."""
+        current_volume = self.control_bar.volume_slider.value()
+        new_volume = max(0, current_volume - 5)
+        self.control_bar.set_volume(new_volume)
+        self.on_volume_changed(new_volume)
+        self.status_manager.show_info(f"Volume: {new_volume}%", timeout=1500)
+
+    def toggle_mute(self):
+        """Toggle mute state."""
+        if not hasattr(self, "_pre_mute_volume"):
+            self._pre_mute_volume = 80
+
+        current_volume = self.control_bar.volume_slider.value()
+        if current_volume > 0:
+            # Mute
+            self._pre_mute_volume = current_volume
+            self.control_bar.set_volume(0)
+            self.on_volume_changed(0)
+            self.status_manager.show_info("Muted", timeout=1500)
+        else:
+            # Unmute
+            self.control_bar.set_volume(self._pre_mute_volume)
+            self.on_volume_changed(self._pre_mute_volume)
+            self.status_manager.show_info(
+                f"Volume: {self._pre_mute_volume}%", timeout=1500
+            )
+
+    def next_channel(self):
+        """Select and play the next channel in the list."""
+        if hasattr(self.channel_list_widget, "select_next_channel"):
+            next_channel = self.channel_list_widget.select_next_channel()
+            if next_channel:
+                self.play_channel(next_channel)
+        else:
+            self.status_manager.show_info(
+                "Channel navigation not available", timeout=2000
+            )
+
+    def previous_channel(self):
+        """Select and play the previous channel in the list."""
+        if hasattr(self.channel_list_widget, "select_previous_channel"):
+            prev_channel = self.channel_list_widget.select_previous_channel()
+            if prev_channel:
+                self.play_channel(prev_channel)
+        else:
+            self.status_manager.show_info(
+                "Channel navigation not available", timeout=2000
+            )
+
+    def channel_page_down(self):
+        """Move down one page in the channel list."""
+        if hasattr(self.channel_list_widget, "page_down"):
+            self.channel_list_widget.page_down()
+        else:
+            self.status_manager.show_info("Page navigation not available", timeout=2000)
+
+    def channel_page_up(self):
+        """Move up one page in the channel list."""
+        if hasattr(self.channel_list_widget, "page_up"):
+            self.channel_list_widget.page_up()
+        else:
+            self.status_manager.show_info("Page navigation not available", timeout=2000)
+
+    def select_category_by_index(self, index):
+        """Select a category by its index (0-8 for categories 1-9)."""
+        if index < self.category_list_widget.count():
+            item = self.category_list_widget.item(index)
+            if item:
+                self.category_list_widget.setCurrentItem(item)
+                self.on_category_selected(item)
+                category_name = item.text()
+                self.status_manager.show_info(
+                    f"Selected category: {category_name}", timeout=2000
+                )
+        else:
+            self.status_manager.show_info(
+                f"Category {index + 1} not available", timeout=2000
+            )
+
+    def refresh_playlist(self):
+        """Refresh the current playlist."""
+        if self.current_m3u_path:
+            self.status_manager.show_info("Refreshing playlist...", timeout=0)
+            self.parse_m3u_file(self.current_m3u_path)
+        else:
+            self.status_manager.show_info("No playlist to refresh", timeout=2000)
+
+    def toggle_subtitles(self):
+        """Toggle subtitle display on/off."""
+        if hasattr(self, 'subtitle_manager'):
+            if self.subtitle_manager.is_enabled:
+                self.subtitle_manager.disable_subtitles()
+                self.status_manager.show_info("Subtitles disabled", timeout=1500)
+            else:
+                self.subtitle_manager.enable_subtitles()
+                self.status_manager.show_info("Subtitles enabled", timeout=1500)
+        else:
+            self.status_manager.show_info("Subtitle system not available", timeout=2000)
+
+    def load_subtitle_file(self):
+        """Load a subtitle file manually."""
+        if hasattr(self, 'subtitle_manager'):
+            track = self.subtitle_manager.select_subtitle_file(self)
+            if track:
+                self.subtitle_manager.set_active_track(track.id)
+                self.status_manager.show_info(f"Loaded subtitle: {track.title}", timeout=2000)
+        else:
+            self.status_manager.show_info("Subtitle system not available", timeout=2000)
+
+    def detect_embedded_subtitles(self):
+        """Manually detect embedded subtitle tracks in current media."""
+        if hasattr(self, 'subtitle_manager') and self.player.current_url:
+            # Check if subtitle detection should be skipped for live streams
+            should_skip_live = self.settings_manager.get_setting("disable_subtitle_detection_for_live", True)
+            current_channel = getattr(self, '_current_channel_info', None)
+
+            if should_skip_live and current_channel and self._is_live_stream(current_channel):
+                self.status_manager.show_info("Subtitle detection skipped for live streams", timeout=2000)
+                return
+
+            try:
+                embedded_tracks = self.subtitle_manager.detect_embedded_tracks(self.player.current_url)
+                if embedded_tracks:
+                    self.status_manager.show_info(
+                        f"Found {len(embedded_tracks)} embedded subtitle tracks",
+                        timeout=3000
+                    )
+                    # Show available tracks
+                    track_names = [track.display_name for track in embedded_tracks]
+                    print(f"Available embedded tracks: {', '.join(track_names)}")
+                else:
+                    self.status_manager.show_info("No embedded subtitle tracks found", timeout=2000)
+            except Exception as e:
+                self.status_manager.show_error(f"Error detecting subtitles: {str(e)}")
+        else:
+            self.status_manager.show_info("No media loaded or subtitle system unavailable", timeout=2000)
+
+    def toggle_subtitle_panel(self):
+        """Toggle the subtitle control panel visibility."""
+        if hasattr(self, 'subtitle_control'):
+            if self.subtitle_control.isVisible():
+                # Hide the panel
+                self.subtitle_control.hide()
+                self.right_layout.removeWidget(self.subtitle_control)
+                self.status_manager.show_info("Subtitle panel hidden", timeout=1500)
+            else:
+                # Show the panel
+                self.right_layout.addWidget(self.subtitle_control)
+                self.subtitle_control.show()
+                self.status_manager.show_info("Subtitle panel shown", timeout=1500)
+
+                # Auto-detect embedded tracks when panel is opened (only for non-live streams if setting enabled)
+                if self.player.current_url:
+                    should_skip_live = self.settings_manager.get_setting("disable_subtitle_detection_for_live", True)
+                    current_channel = getattr(self, '_current_channel_info', None)
+
+                    if should_skip_live and current_channel and self._is_live_stream(current_channel):
+                        self.status_manager.show_info("Live streams typically don't have embedded subtitles", timeout=2000)
+                    else:
+                        self.detect_embedded_subtitles()
+        else:
+            self.status_manager.show_info("Subtitle system not available", timeout=2000)
+
+    def _on_subtitle_track_changed(self, track_id: str):
+        """Handle subtitle track selection change."""
+        if not track_id:
+            # "None" selected - disable subtitles
+            if hasattr(self, 'subtitle_manager'):
+                self.subtitle_manager.disable_subtitles()
+                self.status_manager.show_info("Subtitles disabled", timeout=1500)
+            return
+
+        if hasattr(self, 'subtitle_manager'):
+            track = self.subtitle_manager.tracks.get(track_id)
+            if track:
+                if track.is_embedded:
+                    # Handle embedded track
+                    success = self.subtitle_manager.set_embedded_track(track_id)
+                    if success:
+                        self.status_manager.show_info(f"Activated: {track.display_name}", timeout=2000)
+                        # For embedded tracks, we need to tell the media player to use this subtitle stream
+                        self._activate_embedded_subtitle_in_player(track)
+                    else:
+                        self.status_manager.show_error("Failed to activate embedded subtitle track")
+                else:
+                    # Handle external track
+                    success = self.subtitle_manager.set_active_track(track_id)
+                    if success:
+                        self.status_manager.show_info(f"Loaded: {track.display_name}", timeout=2000)
+                    else:
+                        self.status_manager.show_error("Failed to load subtitle track")
+            else:
+                self.status_manager.show_error("Subtitle track not found")
+        else:
+            self.status_manager.show_info("Subtitle system not available", timeout=2000)
+
+    def _activate_embedded_subtitle_in_player(self, track):
+        """Activate embedded subtitle track in the media player."""
+        if hasattr(self.player, 'set_subtitle_track') and track.stream_index is not None:
+            try:
+                # Get available subtitle tracks from the player
+                player_tracks = self.player.get_subtitle_tracks()
+                print(f"\n🔍 DEBUG: Player has {len(player_tracks)} subtitle tracks available")
+
+                # Debug: Show all available tracks
+                for i, player_track in enumerate(player_tracks):
+                    player_lang = player_track.get('language', 'unknown')
+                    player_title = player_track.get('title', 'no title')
+                    print(f"  Player track {i}: {player_lang} - {player_title}")
+
+                print(f"🎯 Looking for track: {track.language} (stream index {track.stream_index})")
+
+                # Create language mapping for better matching
+                language_codes = {
+                    'ara': 'arabic', 'ar': 'arabic',
+                    'eng': 'english', 'en': 'english',
+                    'pol': 'polish', 'pl': 'polish',
+                    'hrv': 'croatian', 'hr': 'croatian',
+                    'hun': 'hungarian', 'hu': 'hungarian',
+                    'ita': 'italian', 'it': 'italian',
+                    'spa': 'spanish', 'es': 'spanish',
+                    'fra': 'french', 'fr': 'french',
+                    'deu': 'german', 'de': 'german',
+                    'rus': 'russian', 'ru': 'russian',
+                    'jpn': 'japanese', 'ja': 'japanese',
+                    'kor': 'korean', 'ko': 'korean',
+                    'chi': 'chinese', 'zh': 'chinese',
+                    'vie': 'vietnamese', 'vi': 'vietnamese',
+                    'tha': 'thai', 'th': 'thai',
+                    'tur': 'turkish', 'tr': 'turkish',
+                    'por': 'portuguese', 'pt': 'portuguese',
+                    'ron': 'romanian', 'ro': 'romanian',
+                    'swe': 'swedish', 'sv': 'swedish',
+                    'nor': 'norwegian', 'no': 'norwegian',
+                    'nld': 'dutch', 'nl': 'dutch',
+                    'msa': 'malay', 'ms': 'malay',
+                    'ind': 'indonesian', 'id': 'indonesian'
+                }
+
+                # Normalize the target language
+                target_lang = track.language.lower()
+                target_lang_full = language_codes.get(target_lang, target_lang)
+
+                player_track_index = -1
+
+                # Method 1: Exact language code match
+                for i, player_track in enumerate(player_tracks):
+                    player_lang = player_track.get('language', '').lower()
+                    if player_lang == target_lang or player_lang == target_lang_full:
+                        player_track_index = i
+                        print(f"✅ Exact language match: {target_lang} -> player index {i}")
+                        break
+
+                # Method 2: Language code prefix match (e.g., 'ara' matches 'ar')
+                if player_track_index == -1:
+                    for i, player_track in enumerate(player_tracks):
+                        player_lang = player_track.get('language', '').lower()
+                        if (len(target_lang) >= 2 and len(player_lang) >= 2 and
+                            target_lang[:2] == player_lang[:2]):
+                            player_track_index = i
+                            print(f"✅ Language prefix match: {target_lang} -> player index {i}")
+                            break
+
+                # Method 3: Title-based matching
+                if player_track_index == -1:
+                    for i, player_track in enumerate(player_tracks):
+                        player_title = player_track.get('title', '').lower()
+                        if target_lang_full in player_title or target_lang in player_title:
+                            player_track_index = i
+                            print(f"✅ Title-based match: {target_lang} -> player index {i}")
+                            break
+
+                # Method 4: Use the relative position in subtitle tracks only
+                if player_track_index == -1:
+                    # Get all subtitle tracks from ffprobe detection
+                    all_subtitle_tracks = [t for t in self.subtitle_manager.tracks.values() if t.is_embedded]
+                    all_subtitle_tracks.sort(key=lambda x: x.stream_index)
+
+                    # Find the position of our target track
+                    target_position = -1
+                    for pos, sub_track in enumerate(all_subtitle_tracks):
+                        if sub_track.id == track.id:
+                            target_position = pos
+                            break
+
+                    if 0 <= target_position < len(player_tracks):
+                        player_track_index = target_position
+                        print(f"✅ Position-based match: position {target_position} -> player index {player_track_index}")
+
+                # Method 5: Last resort - try stream index directly
+                if player_track_index == -1 and 0 <= track.stream_index < len(player_tracks):
+                    player_track_index = track.stream_index
+                    print(f"⚠️ Using direct stream index: {track.stream_index}")
+
+                # Activate the track
+                if player_track_index >= 0:
+                    print(f"🎬 Attempting to activate player track {player_track_index}")
+                    success = self.player.set_subtitle_track(player_track_index)
+                    if success:
+                        # Verify the activation
+                        current_track = self.player.get_current_subtitle_track()
+                        print(f"✅ Activated subtitle track {player_track_index}, current: {current_track}")
+                        self.status_manager.show_success(f"Activated: {track.display_name}")
+
+                        # Show which track was actually activated
+                        if 0 <= player_track_index < len(player_tracks):
+                            actual_track = player_tracks[player_track_index]
+                            actual_lang = actual_track.get('language', 'unknown')
+                            print(f"📺 Actually showing: {actual_lang} subtitles")
+                    else:
+                        print(f"❌ Failed to activate subtitle track {player_track_index}")
+                        self.status_manager.show_error("Failed to activate subtitle track")
+                else:
+                    print("❌ No suitable subtitle track found in player")
+                    self.status_manager.show_warning("No matching subtitle track found in player")
+
+            except Exception as e:
+                print(f"Error activating embedded subtitle track: {e}")
+                import traceback
+                traceback.print_exc()
+                self.status_manager.show_error(f"Error activating subtitles: {str(e)}")
+        else:
+            # Fallback: show info about the limitation
+            self.status_manager.show_warning(
+                f"Selected {track.display_name} - Player doesn't support embedded subtitle switching"
+            )
+
+    def _on_position_changed_for_subtitles(self, position_ms):
+        """Handle position changes for subtitle timing."""
+        if hasattr(self, 'subtitle_manager'):
+            # Convert milliseconds to seconds
+            position_seconds = position_ms / 1000.0
+            self.subtitle_manager.update_position(position_seconds)
+
+    def _update_subtitle_position(self):
+        """Update subtitle display position relative to video widget."""
+        if hasattr(self, 'subtitle_display') and self.subtitle_display.isVisible():
+            # Position subtitle over the video widget
+            video_geometry = self.video_widget.geometry()
+            if self.is_fullscreen:
+                # In fullscreen, position relative to the screen
+                screen_geometry = self.screen().geometry()
+                self.subtitle_display.position_subtitle(screen_geometry, "bottom")
+            else:
+                # In windowed mode, position relative to video widget
+                global_geometry = self.video_widget.mapToGlobal(video_geometry.topLeft())
+                video_geometry.moveTo(global_geometry)
+                self.subtitle_display.position_subtitle(video_geometry, "bottom")
+
+    def show_keyboard_shortcuts_help(self):
+        """Show keyboard shortcuts help dialog."""
+        from PySide6.QtWidgets import (
+            QDialog,
+            QHBoxLayout,
+            QPushButton,
+            QTextEdit,
+            QVBoxLayout,
+        )
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Keyboard Shortcuts - PyIPTV")
+        dialog.setModal(True)
+        dialog.resize(600, 500)
+
+        layout = QVBoxLayout(dialog)
+
+        # Create text widget with shortcuts
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+
+        shortcuts_text = """
+<h2>PyIPTV Keyboard Shortcuts</h2>
+
+<h3>🎮 Playback Controls</h3>
+<table>
+<tr><td><b>Space / P</b></td><td>Play/Pause</td></tr>
+<tr><td><b>S</b></td><td>Stop playback</td></tr>
+</table>
+
+<h3>🔊 Volume Controls</h3>
+<table>
+<tr><td><b>Up Arrow</b></td><td>Volume up (+5%)</td></tr>
+<tr><td><b>Down Arrow</b></td><td>Volume down (-5%)</td></tr>
+<tr><td><b>M</b></td><td>Toggle mute</td></tr>
+</table>
+
+<h3>📺 Channel Navigation</h3>
+<table>
+<tr><td><b>Right Arrow</b></td><td>Next channel</td></tr>
+<tr><td><b>Left Arrow</b></td><td>Previous channel</td></tr>
+<tr><td><b>Page Down</b></td><td>Page down in channel list</td></tr>
+<tr><td><b>Page Up</b></td><td>Page up in channel list</td></tr>
+<tr><td><b>1-9</b></td><td>Select category by number</td></tr>
+</table>
+
+<h3>🖥️ Display Controls</h3>
+<table>
+<tr><td><b>F11 / F</b></td><td>Toggle fullscreen</td></tr>
+<tr><td><b>Escape</b></td><td>Exit fullscreen</td></tr>
+</table>
+
+<h3>🔍 Search & Navigation</h3>
+<table>
+<tr><td><b>Ctrl+F</b></td><td>Focus channel search</td></tr>
+<tr><td><b>Ctrl+Shift+F</b></td><td>Focus category search</td></tr>
+</table>
+
+<h3>📝 Subtitle Controls</h3>
+<table>
+<tr><td><b>C</b></td><td>Toggle subtitles on/off</td></tr>
+<tr><td><b>Ctrl+S</b></td><td>Load subtitle file</td></tr>
+<tr><td><b>Ctrl+D</b></td><td>Detect embedded subtitles</td></tr>
+<tr><td><b>Ctrl+T</b></td><td>Toggle subtitle control panel</td></tr>
+</table>
+
+<h3>📁 File & Application</h3>
+<table>
+<tr><td><b>Ctrl+O</b></td><td>Open M3U file</td></tr>
+<tr><td><b>Ctrl+P</b></td><td>Playlist manager</td></tr>
+<tr><td><b>F5</b></td><td>Refresh playlist</td></tr>
+<tr><td><b>Ctrl+,</b></td><td>Settings</td></tr>
+<tr><td><b>F1 / Ctrl+H</b></td><td>Show this help</td></tr>
+<tr><td><b>Ctrl+Q</b></td><td>Quit application</td></tr>
+</table>
+
+<p><i>Tip: Most shortcuts work in both windowed and fullscreen modes.</i></p>
+        """
+
+        text_edit.setHtml(shortcuts_text)
+        layout.addWidget(text_edit)
+
+        # Close button
+        button_layout = QHBoxLayout()
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(dialog.accept)
+        button_layout.addStretch()
+        button_layout.addWidget(close_button)
+        layout.addLayout(button_layout)
+
+        dialog.exec()
+
+    def show_about_dialog(self):
+        """Show about dialog."""
+        from PySide6.QtWidgets import QMessageBox
+
+        about_text = """
+<h2>PyIPTV</h2>
+<p><b>Version:</b> 1.0.0</p>
+<p><b>A Modern IPTV Player</b></p>
+
+<p>PyIPTV is a feature-rich IPTV player built with PySide6/Qt6, designed for
+streaming live television content from M3U playlists.</p>
+
+<p><b>Features:</b></p>
+<ul>
+<li>📺 M3U Playlist Support</li>
+<li>🎨 Modern Qt6 Interface</li>
+<li>📂 Category Organization</li>
+<li>🔍 Search & Filtering</li>
+<li>🌓 Theme Support</li>
+<li>⚡ Performance Optimized</li>
+</ul>
+
+<p><b>Author:</b> David Markey</p>
+<p><b>License:</b> MIT</p>
+<p><b>Website:</b> <a href="https://github.com/dmarkey/PyIPTV">https://github.com/dmarkey/PyIPTV</a></p>
+        """
+
+        QMessageBox.about(self, "About PyIPTV", about_text)
+
     def update_player_ui_state(self):
         """Periodically updates UI elements based on player state."""
         if self.player:
@@ -823,6 +1812,39 @@ class MainWindow(QMainWindow):
         self.status_manager.show_info(
             f"Switched to audio track {track_index + 1}", timeout=3000
         )
+
+    def on_subtitle_track_changed(self, track_id):
+        """Handle subtitle track changes from the subtitle track selector."""
+        if not track_id:
+            # "None" selected - disable subtitles
+            if hasattr(self, 'subtitle_manager'):
+                self.subtitle_manager.disable_subtitles()
+                self.status_manager.show_info("Subtitles disabled", timeout=1500)
+            return
+
+        if hasattr(self, 'subtitle_manager'):
+            track = self.subtitle_manager.tracks.get(track_id)
+            if track:
+                if track.is_embedded:
+                    # Handle embedded track
+                    success = self.subtitle_manager.set_embedded_track(track_id)
+                    if success:
+                        self.status_manager.show_info(f"Activated: {track.display_name}", timeout=2000)
+                        # For embedded tracks, we need to tell the media player to use this subtitle stream
+                        self._activate_embedded_subtitle_in_player(track)
+                    else:
+                        self.status_manager.show_error("Failed to activate embedded subtitle track")
+                else:
+                    # Handle external track
+                    success = self.subtitle_manager.set_active_track(track_id)
+                    if success:
+                        self.status_manager.show_info(f"Loaded: {track.display_name}", timeout=2000)
+                    else:
+                        self.status_manager.show_error("Failed to load subtitle track")
+            else:
+                self.status_manager.show_error("Subtitle track not found")
+        else:
+            self.status_manager.show_info("Subtitle system not available", timeout=2000)
 
     def show_loading_state(self, show):
         """Show/hide loading state (can be enhanced with spinner)."""
@@ -1018,11 +2040,13 @@ class MainWindow(QMainWindow):
 
     def on_video_double_click_docked(self, event):
         """Handle double-click on video widget in docked mode."""
+        _ = event  # Unused parameter
         if not self.is_fullscreen:
             self.enter_fullscreen()
 
     def on_video_double_click(self, event):
         """Handle double-click on video widget in fullscreen mode."""
+        _ = event  # Unused parameter
         self.exit_fullscreen()
 
     def on_video_key_press(self, event):
@@ -1046,6 +2070,21 @@ class MainWindow(QMainWindow):
         # Exit fullscreen if active
         if self.is_fullscreen:
             self.exit_fullscreen()
+
+        # Stop enhanced features
+        if hasattr(self, "dead_link_manager"):
+            self.dead_link_manager.stop_auto_checking()
+
+        if hasattr(self, "playlist_auto_updater"):
+            self.playlist_auto_updater.stop_auto_updates()
+
+        if hasattr(self, "recording_manager"):
+            # Stop any active recordings
+            for session_id in list(self.recording_manager.active_sessions.keys()):
+                self.recording_manager.stop_recording(session_id)
+
+        if hasattr(self, "enhanced_subtitle_manager"):
+            self.enhanced_subtitle_manager.cleanup()
 
         # Stop and cleanup player
         if hasattr(self, "player") and self.player:
@@ -1117,6 +2156,552 @@ class MainWindow(QMainWindow):
         title = self.windowTitle()
         if title.endswith(" - Working..."):
             self.setWindowTitle(title.replace(" - Working...", ""))
+
+    def resizeEvent(self, event):
+        """Handle window resize."""
+        super().resizeEvent(event)
+
+        # Update channel info overlay position
+        if hasattr(self, 'channel_info_overlay'):
+            self.channel_info_overlay.update_position()
+
+    # Enhanced Features Callbacks
+    def on_dead_links_detected(self, dead_links):
+        """Handle detection of dead links."""
+        dead_count = len(dead_links)
+        self.status_manager.show_warning(f"Found {dead_count} dead links")
+
+        # If auto-removal is enabled, remove them
+        if self.settings_manager.get_setting("auto_remove_dead_links", False):
+            self.remove_dead_links(dead_links)
+        else:
+            # Show dialog asking user what to do
+            self.show_dead_links_dialog(dead_links)
+
+    def on_links_validated(self, valid_count, total_count):
+        """Handle completion of link validation."""
+        dead_count = total_count - valid_count
+        if dead_count == 0:
+            self.status_manager.show_success(f"All {total_count} links are valid")
+        else:
+            self.status_manager.show_info(f"Validation complete: {valid_count}/{total_count} links valid")
+
+    def on_validation_progress(self, current, total):
+        """Handle validation progress updates."""
+        self.status_manager.show_info(f"Validating links: {current}/{total}")
+
+    def on_m3u_file_saved(self, file_path):
+        """Handle successful M3U file save."""
+        filename = os.path.basename(file_path)
+        self.status_manager.show_success(f"Saved: {filename}")
+
+    def on_m3u_save_failed(self, file_path, error_message):
+        """Handle M3U file save failure."""
+        filename = os.path.basename(file_path)
+        self.status_manager.show_error(f"Failed to save {filename}: {error_message}")
+
+    def on_playlist_update_started(self, playlist_id):
+        """Handle start of playlist update."""
+        playlist = self.playlist_manager.playlists.get(playlist_id)
+        if playlist:
+            self.status_manager.show_info(f"Updating playlist: {playlist.name}")
+
+    def on_playlist_update_completed(self, playlist_id, result):
+        """Handle completion of playlist update."""
+        playlist = self.playlist_manager.playlists.get(playlist_id)
+        if playlist and result.success:
+            message = f"Updated {playlist.name}"
+            if result.channels_added > 0 or result.channels_removed > 0:
+                message += f" (+{result.channels_added}, -{result.channels_removed})"
+            self.status_manager.show_success(message)
+
+            # Reload if this is the current playlist
+            if self.current_m3u_path == playlist.source:
+                self.parse_m3u_file(playlist.cached_file_path or playlist.source)
+
+    def on_playlist_update_failed(self, playlist_id, error_message):
+        """Handle playlist update failure."""
+        playlist = self.playlist_manager.playlists.get(playlist_id)
+        if playlist:
+            self.status_manager.show_error(f"Failed to update {playlist.name}: {error_message}")
+
+    def remove_dead_links(self, dead_links):
+        """Remove dead links from the current playlist."""
+        if not self.all_channels_data:
+            return
+
+        dead_urls = {link.url for link in dead_links}
+        original_count = len(self.all_channels_data)
+
+        # Remove dead channels
+        self.all_channels_data = [
+            channel for channel in self.all_channels_data
+            if channel.get("url") not in dead_urls
+        ]
+
+        # Update categories
+        for category_name, channels in self.categories_data.items():
+            self.categories_data[category_name] = [
+                channel for channel in channels
+                if channel.get("url") not in dead_urls
+            ]
+
+        removed_count = original_count - len(self.all_channels_data)
+
+        # Update UI
+        self.update_channel_list()
+
+        # Auto-save if enabled
+        if self.current_m3u_path and self.settings_manager.get_setting("auto_save_m3u", True):
+            self.m3u_auto_saver.schedule_save(
+                self.current_m3u_path,
+                self.all_channels_data,
+                self.categories_data
+            )
+
+        self.status_manager.show_success(f"Removed {removed_count} dead links")
+
+    def show_dead_links_dialog(self, dead_links):
+        """Show dialog with dead links for user review."""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QListWidget, QPushButton, QLabel
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Dead Links Detected")
+        dialog.setModal(True)
+        dialog.resize(600, 400)
+
+        layout = QVBoxLayout(dialog)
+
+        # Info label
+        info_label = QLabel(f"Found {len(dead_links)} dead links:")
+        layout.addWidget(info_label)
+
+        # List of dead links
+        list_widget = QListWidget()
+        for link in dead_links:
+            # Find channel name for this URL
+            channel_name = "Unknown"
+            for channel in self.all_channels_data:
+                if channel.get("url") == link.url:
+                    channel_name = channel.get("name", "Unknown")
+                    break
+            list_widget.addItem(f"{channel_name} - {link.url}")
+        layout.addWidget(list_widget)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+
+        remove_button = QPushButton("Remove Dead Links")
+        remove_button.clicked.connect(lambda: self.remove_dead_links(dead_links))
+        remove_button.clicked.connect(dialog.accept)
+
+        keep_button = QPushButton("Keep All Links")
+        keep_button.clicked.connect(dialog.reject)
+
+        button_layout.addWidget(remove_button)
+        button_layout.addWidget(keep_button)
+        layout.addLayout(button_layout)
+
+        dialog.exec()
+
+    def start_recording_current_channel(self):
+        """Start recording the currently playing channel."""
+        if not hasattr(self, 'recording_manager'):
+            self.status_manager.show_error("Recording not available")
+            return
+
+        current_channel = self.channel_list_widget.get_selected_channel()
+        if not current_channel:
+            self.status_manager.show_error("No channel selected")
+            return
+
+        channel_name = current_channel.get("name", "Unknown")
+        stream_url = current_channel.get("url")
+
+        if not stream_url:
+            self.status_manager.show_error("No stream URL available")
+            return
+
+        # Start recording
+        session_id = self.recording_manager.start_recording(
+            channel_name, stream_url
+        )
+
+        if session_id:
+            self.status_manager.show_success(f"Started recording: {channel_name}")
+        else:
+            self.status_manager.show_error("Failed to start recording")
+
+    def validate_all_links(self):
+        """Manually trigger validation of all channel links."""
+        if not self.all_channels_data:
+            self.status_manager.show_warning("No channels loaded")
+            return
+
+        self.status_manager.show_info("Starting link validation...")
+        self.dead_link_manager.validate_channels(self.all_channels_data)
+
+    # Geolocation-based Subtitle Callbacks
+    def on_subtitle_tracks_detected(self, tracks):
+        """Handle detection of subtitle tracks."""
+        if tracks:
+            track_count = len(tracks)
+            self.status_manager.show_info(f"Detected {track_count} subtitle tracks")
+
+            # Update subtitle control widget with available tracks
+            if hasattr(self, 'subtitle_control'):
+                # This would update the subtitle track selector
+                pass
+
+    def on_auto_subtitle_selected(self, track_index, reason):
+        """Handle automatic subtitle track selection."""
+        self.status_manager.show_success(f"Subtitle: {reason}")
+
+    def on_geolocation_status_changed(self, status_message):
+        """Handle geolocation status changes."""
+        self.status_manager.show_info(status_message)
+
+    def on_recording_requested(self, channel):
+        """Handle recording request from context menu."""
+        if not hasattr(self, 'recording_manager'):
+            self.status_manager.show_error("Recording not available")
+            return
+
+        channel_name = channel.get("name", "Unknown")
+        stream_url = channel.get("url")
+
+        if not stream_url:
+            self.status_manager.show_error("No stream URL available")
+            return
+
+        # Start recording
+        session_id = self.recording_manager.start_recording(
+            channel_name, stream_url
+        )
+
+        if session_id:
+            self.status_manager.show_success(f"Started recording: {channel_name}")
+        else:
+            self.status_manager.show_error("Failed to start recording")
+
+    def stop_recording_by_id(self, session_id):
+        """Stop recording by session ID."""
+        if hasattr(self, 'recording_manager'):
+            success = self.recording_manager.stop_recording(session_id)
+            if success:
+                self.status_manager.show_success("Recording stopped")
+            else:
+                self.status_manager.show_error("Failed to stop recording")
+
+    def on_recording_started(self, session_id):
+        """Handle recording started event."""
+        if hasattr(self, 'recording_status_widget') and hasattr(self, 'recording_manager'):
+            sessions = self.recording_manager.get_all_sessions()
+            for session in sessions:
+                if session.id == session_id:
+                    self.recording_status_widget.add_recording(session)
+                    break
+
+        # Update status bar
+        self.update_recording_status_indicator()
+
+    def on_recording_stopped(self, session_id):
+        """Handle recording stopped event."""
+        if hasattr(self, 'recording_status_widget'):
+            self.recording_status_widget.remove_recording(session_id)
+
+        # Update status bar
+        self.update_recording_status_indicator()
+
+    def on_recording_failed(self, session_id, error_message):
+        """Handle recording failed event."""
+        if hasattr(self, 'recording_status_widget'):
+            self.recording_status_widget.remove_recording(session_id)
+        self.status_manager.show_error(f"Recording failed: {error_message}")
+
+    def toggle_recording(self):
+        """Toggle recording for the current channel."""
+        # Check if we have any active recordings for the current channel
+        current_channel = self.channel_list_widget.get_selected_channel()
+        if not current_channel:
+            self.status_manager.show_error("No channel selected")
+            return
+
+        channel_name = current_channel.get("name", "Unknown")
+        stream_url = current_channel.get("url")
+
+        if not stream_url:
+            self.status_manager.show_error("No stream URL available")
+            return
+
+        # Check if this channel is already being recorded
+        if hasattr(self, 'recording_manager'):
+            active_sessions = self.recording_manager.get_active_sessions()
+            current_session = None
+
+            for session in active_sessions:
+                if session.stream_url == stream_url:
+                    current_session = session
+                    break
+
+            if current_session:
+                # Stop the current recording
+                success = self.recording_manager.stop_recording(current_session.id)
+                if success:
+                    self.status_manager.show_success(f"Stopped recording: {channel_name}")
+                else:
+                    self.status_manager.show_error("Failed to stop recording")
+            else:
+                # Start new recording
+                session_id = self.recording_manager.start_recording(channel_name, stream_url)
+                if session_id:
+                    self.status_manager.show_success(f"Started recording: {channel_name}")
+                else:
+                    self.status_manager.show_error("Failed to start recording")
+        else:
+            self.status_manager.show_error("Recording not available")
+
+    def update_recording_status_indicator(self):
+        """Update the recording status indicator in the status bar and control bar."""
+        if not hasattr(self, 'recording_status_widget') or not hasattr(self, 'status_manager'):
+            return
+
+        active_count = self.recording_status_widget.get_active_count()
+
+        # Update status bar
+        if active_count > 0:
+            status_text = f"🔴 Recording ({active_count})"
+            self.status_manager.show_persistent_info(status_text)
+        else:
+            self.status_manager.clear_persistent_info()
+
+        # Update control bar record button
+        if hasattr(self, 'control_bar'):
+            is_recording = active_count > 0
+            self.control_bar.update_recording_state(is_recording, active_count)
+
+    def update_current_playlist(self):
+        """Manually trigger update of current playlist."""
+        if not self.current_m3u_path:
+            self.status_manager.show_warning("No playlist loaded")
+            return
+
+        playlist_entry = self.playlist_manager.get_playlist_by_source(self.current_m3u_path)
+        if playlist_entry:
+            self.playlist_auto_updater.update_playlist(playlist_entry.id)
+        else:
+            self.status_manager.show_warning("Current playlist not found in manager")
+
+    def show_enhanced_settings(self):
+        """Show enhanced features settings dialog."""
+        from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QCheckBox,
+                                     QSpinBox, QLabel, QPushButton, QGroupBox, QFormLayout)
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Enhanced Features Settings")
+        dialog.setModal(True)
+        dialog.resize(500, 400)
+
+        layout = QVBoxLayout(dialog)
+
+        # Auto-save group
+        autosave_group = QGroupBox("Auto-Save M3U Files")
+        autosave_layout = QFormLayout(autosave_group)
+
+        autosave_checkbox = QCheckBox()
+        autosave_checkbox.setChecked(self.settings_manager.get_setting("auto_save_m3u", True))
+        autosave_layout.addRow("Enable auto-save:", autosave_checkbox)
+
+        layout.addWidget(autosave_group)
+
+        # Dead link detection group
+        deadlink_group = QGroupBox("Dead Link Detection")
+        deadlink_layout = QFormLayout(deadlink_group)
+
+        deadlink_checkbox = QCheckBox()
+        deadlink_checkbox.setChecked(self.settings_manager.get_setting("dead_link_detection", True))
+        deadlink_layout.addRow("Enable detection:", deadlink_checkbox)
+
+        deadlink_interval = QSpinBox()
+        deadlink_interval.setRange(1, 168)  # 1 hour to 1 week
+        deadlink_interval.setValue(self.settings_manager.get_setting("dead_link_check_interval_hours", 6))
+        deadlink_layout.addRow("Check interval (hours):", deadlink_interval)
+
+        deadlink_timeout = QSpinBox()
+        deadlink_timeout.setRange(5, 60)  # 5 to 60 seconds
+        deadlink_timeout.setValue(self.settings_manager.get_setting("dead_link_timeout_seconds", 10))
+        deadlink_layout.addRow("Timeout (seconds):", deadlink_timeout)
+
+        auto_remove_checkbox = QCheckBox()
+        auto_remove_checkbox.setChecked(self.settings_manager.get_setting("auto_remove_dead_links", False))
+        deadlink_layout.addRow("Auto-remove dead links:", auto_remove_checkbox)
+
+        layout.addWidget(deadlink_group)
+
+        # Auto-update group
+        autoupdate_group = QGroupBox("Automatic Playlist Updates")
+        autoupdate_layout = QFormLayout(autoupdate_group)
+
+        autoupdate_checkbox = QCheckBox()
+        autoupdate_checkbox.setChecked(self.settings_manager.get_setting("auto_update_playlists", True))
+        autoupdate_layout.addRow("Enable auto-update:", autoupdate_checkbox)
+
+        update_interval = QSpinBox()
+        update_interval.setRange(1, 168)  # 1 hour to 1 week
+        update_interval.setValue(self.settings_manager.get_setting("auto_update_interval_hours", 24))
+        autoupdate_layout.addRow("Update interval (hours):", update_interval)
+
+        layout.addWidget(autoupdate_group)
+
+        # Geolocation group
+        geolocation_group = QGroupBox("Geolocation-based Subtitles")
+        geolocation_layout = QFormLayout(geolocation_group)
+
+        geolocation_enabled_checkbox = QCheckBox()
+        geo_auto_detect = self.settings_manager.get_setting("geolocation_auto_detect")
+        geolocation_enabled_checkbox.setChecked(geo_auto_detect if geo_auto_detect is not None else True)
+        geolocation_layout.addRow("Enable geolocation detection:", geolocation_enabled_checkbox)
+
+        auto_subtitle_checkbox = QCheckBox()
+        auto_subtitle = self.settings_manager.get_setting("geolocation_auto_subtitle")
+        auto_subtitle_checkbox.setChecked(auto_subtitle if auto_subtitle is not None else True)
+        geolocation_layout.addRow("Auto-select subtitles by location:", auto_subtitle_checkbox)
+
+        geolocation_interval = QSpinBox()
+        geolocation_interval.setRange(1, 168)  # 1 hour to 1 week
+        geo_interval = self.settings_manager.get_setting("geolocation_check_interval_hours")
+        geolocation_interval.setValue(geo_interval if geo_interval is not None else 24)
+        geolocation_layout.addRow("Location check interval (hours):", geolocation_interval)
+
+        layout.addWidget(geolocation_group)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+
+        save_button = QPushButton("Save")
+        save_button.clicked.connect(lambda: self._save_enhanced_settings(
+            dialog, autosave_checkbox, deadlink_checkbox, deadlink_interval,
+            deadlink_timeout, auto_remove_checkbox, autoupdate_checkbox, update_interval,
+            geolocation_enabled_checkbox, auto_subtitle_checkbox, geolocation_interval
+        ))
+
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(dialog.reject)
+
+        button_layout.addWidget(save_button)
+        button_layout.addWidget(cancel_button)
+        layout.addLayout(button_layout)
+
+        dialog.exec()
+
+    def _save_enhanced_settings(self, dialog, autosave_checkbox, deadlink_checkbox,
+                              deadlink_interval, deadlink_timeout, auto_remove_checkbox,
+                              autoupdate_checkbox, update_interval, geolocation_enabled_checkbox,
+                              auto_subtitle_checkbox, geolocation_interval):
+        """Save enhanced features settings."""
+        # Save settings
+        self.settings_manager.set_setting("auto_save_m3u", autosave_checkbox.isChecked())
+        self.settings_manager.set_setting("dead_link_detection", deadlink_checkbox.isChecked())
+        self.settings_manager.set_setting("dead_link_check_interval_hours", deadlink_interval.value())
+        self.settings_manager.set_setting("dead_link_timeout_seconds", deadlink_timeout.value())
+        self.settings_manager.set_setting("auto_remove_dead_links", auto_remove_checkbox.isChecked())
+        self.settings_manager.set_setting("auto_update_playlists", autoupdate_checkbox.isChecked())
+        self.settings_manager.set_setting("auto_update_interval_hours", update_interval.value())
+
+        # Save geolocation settings
+        self.settings_manager.set_setting("geolocation_auto_detect", geolocation_enabled_checkbox.isChecked())
+        self.settings_manager.set_setting("geolocation_auto_subtitle", auto_subtitle_checkbox.isChecked())
+        self.settings_manager.set_setting("geolocation_check_interval_hours", geolocation_interval.value())
+
+        # Restart enhanced features with new settings
+        if hasattr(self, "dead_link_manager"):
+            self.dead_link_manager.setup_auto_checking()
+
+        if hasattr(self, "playlist_auto_updater"):
+            self.playlist_auto_updater.setup_auto_updates()
+
+        if hasattr(self, "enhanced_subtitle_manager"):
+            self.enhanced_subtitle_manager.geolocation_manager.set_auto_detection_enabled(
+                geolocation_enabled_checkbox.isChecked()
+            )
+            self.enhanced_subtitle_manager.set_auto_selection_enabled(
+                auto_subtitle_checkbox.isChecked()
+            )
+
+        self.status_manager.show_success("Enhanced features settings saved")
+        dialog.accept()
+
+    def refresh_geolocation(self):
+        """Manually refresh geolocation."""
+        if hasattr(self, 'enhanced_subtitle_manager'):
+            self.enhanced_subtitle_manager.refresh_location()
+            self.status_manager.show_info("Refreshing location...")
+        else:
+            self.status_manager.show_warning("Geolocation not available")
+
+    def show_current_location(self):
+        """Show current location information."""
+        if not hasattr(self, 'enhanced_subtitle_manager'):
+            self.status_manager.show_warning("Geolocation not available")
+            return
+
+        location = self.enhanced_subtitle_manager.get_location_info()
+        preferred_langs = self.enhanced_subtitle_manager.get_preferred_languages()
+
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Current Location & Subtitle Preferences")
+        dialog.setModal(True)
+        dialog.resize(400, 300)
+
+        layout = QVBoxLayout(dialog)
+
+        if location and location.is_valid:
+            # Location information
+            location_info = QLabel(f"""
+<h3>📍 Current Location</h3>
+<b>Country:</b> {location.country_name} ({location.country_code})<br>
+<b>City:</b> {location.city}<br>
+<b>Region:</b> {location.region}<br>
+<b>Timezone:</b> {location.timezone}<br>
+<b>Coordinates:</b> {location.latitude:.4f}, {location.longitude:.4f}<br>
+<b>Last Updated:</b> {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(location.timestamp))}
+            """)
+            location_info.setWordWrap(True)
+            layout.addWidget(location_info)
+        else:
+            no_location = QLabel("<h3>📍 Location</h3>Location not detected or unavailable.")
+            layout.addWidget(no_location)
+
+        # Preferred languages
+        if preferred_langs:
+            from pyiptv.geolocation_manager import CountryLanguageMapper
+            lang_names = [CountryLanguageMapper.get_language_name(lang) for lang in preferred_langs]
+            lang_text = ", ".join(lang_names)
+
+            lang_info = QLabel(f"""
+<h3>🌐 Preferred Subtitle Languages</h3>
+<b>Languages:</b> {lang_text}<br>
+<b>Codes:</b> {', '.join(preferred_langs)}
+            """)
+            lang_info.setWordWrap(True)
+            layout.addWidget(lang_info)
+
+        # Auto-selection status
+        auto_enabled = self.enhanced_subtitle_manager.is_auto_selection_enabled()
+        auto_status = QLabel(f"""
+<h3>⚙️ Auto-Selection</h3>
+<b>Status:</b> {'✅ Enabled' if auto_enabled else '❌ Disabled'}
+        """)
+        layout.addWidget(auto_status)
+
+        # Close button
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(dialog.accept)
+        layout.addWidget(close_button)
+
+        dialog.exec()
 
 
 if __name__ == "__main__":

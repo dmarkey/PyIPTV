@@ -152,3 +152,7 @@ Thumbs.db
 # Backup files
 *.bak
 *.backup
+
+# Large FFmpeg binaries (download separately)
+ffmpeg_binaries/bin/*.exe
+ffmpeg_binaries/bin/*.zip

@@ -24,6 +24,14 @@
 - 🔍 **Search & Filtering** - Quickly find channels with real-time search
 - 🎵 **Audio Track Selection** - Multi-language audio track support
 
+### Enhanced Features ⭐ NEW
+- 📹 **Live Stream Recording** - Record streams to MP4 with FFmpeg integration
+- 🔗 **Dead Link Detection** - Automatic validation and removal of broken streams
+- 🔄 **Auto-Updates** - Automatic playlist refresh for URL-based sources
+- 💾 **Auto-Save** - Automatic M3U file saving with backup system
+- 🌍 **Geolocation Subtitles** - Auto-select subtitle language based on your location
+- ⚙️ **Advanced Settings** - Comprehensive configuration for all enhanced features
+
 ### User Experience
 - 🌓 **Theme Support** - System-aware theming with KDE integration
 - ⚡ **Performance Optimized** - Handles large playlists with virtualized lists and smart buffering
@@ -47,10 +55,20 @@ uvx pyiptv
 ### From Source
 
 ```bash
-git clone https://github.com/dmarkey/PyIPTV.git
+git clone https://github.com/zinzied/PyIPTV.git
 cd PyIPTV
 pip install -e .
 ```
+
+### Enhanced Features Dependencies
+
+For the enhanced features (recording, dead link detection, auto-updates), install additional dependencies:
+
+```bash
+pip install aiohttp
+```
+
+**Note:** FFmpeg is required for recording functionality. See the FFmpeg installation section below.
 
 ## 📖 Usage
 
@@ -77,12 +95,154 @@ pyiptv /path/to/your/playlist.m3u
 | `pyiptv` | Launch with playlist manager |
 | `pyiptv <playlist_path>` | Launch directly with specified playlist |
 
+## 🚀 Enhanced Features
+
+### 📹 Live Stream Recording
+
+Record live IPTV streams directly to your local storage:
+
+- **Multiple Formats**: MP4, MKV, AVI support
+- **Quality Control**: Copy stream or re-encode with custom settings
+- **Session Management**: Start/stop recordings with progress tracking
+- **Auto-naming**: Automatic file naming with timestamps
+- **Background Recording**: Continue recording while watching other channels
+
+**How to Record:**
+1. **🔴 Record Button** (easiest): Click the red 🔴 button next to Stop in player controls
+2. **Right-click method**: Right-click any channel → "🔴 Start Recording"
+3. **Keyboard shortcut**: Select channel + press `Ctrl+R`
+4. **Tools menu**: Tools → "Start Recording"
+
+**Recording Management:**
+- **🔴 Record Button**: Prominent red button in player controls (toggles recording)
+- **Active recordings widget**: Shows all recordings with stop controls
+- **Status bar indicator**: Displays recording count (🔴 Recording (2))
+- **Real-time updates**: Duration and file size shown live
+- **Individual controls**: Stop specific recordings independently
+
+### 🔗 Dead Link Detection
+
+Automatically detect and manage broken stream links:
+
+- **Async Validation**: Fast concurrent link checking
+- **Smart Detection**: HTTP status codes, timeouts, and connection errors
+- **Auto-Removal**: Optional automatic removal of dead links
+- **User Control**: Review and confirm before removing links
+- **Scheduled Checks**: Configurable automatic validation intervals
+
+**Configuration:**
+- Check interval: 1-168 hours (default: 6 hours)
+- Timeout: 5-60 seconds (default: 10 seconds)
+- Auto-removal: Enable/disable (default: disabled for safety)
+
+### 🔄 Automatic Playlist Updates
+
+Keep your playlists fresh with automatic updates:
+
+- **URL Playlists**: Automatic refresh for web-based playlists
+- **Smart Caching**: Efficient download and storage management
+- **Change Detection**: Only update when content actually changes
+- **Scheduled Updates**: Configurable update intervals
+- **Background Processing**: Non-blocking updates with progress notifications
+
+**Features:**
+- Update interval: 1-168 hours (default: 24 hours)
+- Automatic caching and backup
+- Manual update trigger available
+- Status notifications for all operations
+
+### 💾 Auto-Save M3U Files
+
+Automatically save playlist modifications:
+
+- **Real-time Saving**: Automatic save when playlists are modified
+- **Backup System**: Keeps 10 most recent backups
+- **Debounced Saves**: Intelligent saving to prevent excessive I/O
+- **Format Preservation**: Maintains all M3U metadata and structure
+- **Error Recovery**: Backup restoration on save failures
+
+**Backup Location:** `<playlist_directory>/backups/`
+
+### 🌍 Geolocation-based Subtitle Selection
+
+Automatically select the best subtitle language based on your geographic location:
+
+- **Automatic Detection**: Uses IP geolocation to determine your country
+- **Smart Language Mapping**: 100+ countries with preferred language combinations
+- **Intelligent Selection**: Advanced scoring algorithm for optimal subtitle choice
+- **Manual Override**: Always maintain full control over subtitle selection
+- **Privacy-Friendly**: Location data cached locally, minimal external requests
+
+**How it Works:**
+1. **Location Detection**: Automatically detects your country via IP geolocation
+2. **Language Mapping**: Maps your country to preferred subtitle languages
+3. **Smart Selection**: Scores available subtitle tracks based on preferences
+4. **Fallback System**: Falls back to default or English if preferred languages unavailable
+
+**Country Examples:**
+- 🇹🇳 **Tunisia** → Arabic, French
+- 🇫🇷 **France** → French, English
+- 🇩🇪 **Germany** → German, English
+- 🇸🇦 **Saudi Arabia** → Arabic, English
+- 🇺🇸 **United States** → English, Spanish
+- 🇨🇳 **China** → Chinese, English
+- 🇯🇵 **Japan** → Japanese, English
+- 🇪🇸 **Spain** → Spanish, English
+
+**Configuration:**
+- **Auto-Detection**: Enable/disable automatic location detection
+- **Check Interval**: How often to refresh location (default: 24 hours)
+- **Manual Override**: Set custom language preferences
+- **View Location**: See current detected location and preferences
+
+**Controls:**
+- `Ctrl+L` - Refresh location manually
+- Tools → Show Current Location - View location details
+- Tools → Enhanced Features Settings - Configure all options
+
+## ⌨️ Keyboard Shortcuts
+
+### Playback Controls
+| Shortcut | Action |
+|----------|--------|
+| `Space` / `P` | Play/Pause |
+| `S` | Stop |
+| `M` | Mute/Unmute |
+| `↑` / `↓` | Volume Up/Down |
+| `←` / `→` | Previous/Next Channel |
+
+### Enhanced Features
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+R` | Start Recording Current Channel |
+| `Ctrl+V` | Validate All Links |
+| `F5` | Update Current Playlist |
+| `Ctrl+L` | Refresh Geolocation |
+| `Ctrl+F` | Search Channels |
+| `Ctrl+Shift+F` | Search Categories |
+
+### View Controls
+| Shortcut | Action |
+|----------|--------|
+| `F11` / `F` | Toggle Fullscreen |
+| `Escape` | Exit Fullscreen |
+| `Ctrl+T` | Toggle Subtitle Panel |
+| `C` | Toggle Subtitles |
+
+### Application
+| Shortcut | Action |
+|----------|--------|
+| `F1` / `Ctrl+H` | Show Help |
+| `Ctrl+,` | Open Settings |
+| `Ctrl+Q` | Quit Application |
+
 ## 📋 Requirements
 
 | Component | Version | Description |
 |-----------|---------|-------------|
 | Python | 3.8+ | Core runtime |
 | PySide6 | 6.5.0+ | Qt6 bindings |
+| aiohttp | Latest | Async HTTP for link validation |
 | Qt6 multimedia libraries | Latest | Media playback |
 | Operating System | Linux, Windows, macOS | Cross-platform support |
 
@@ -92,7 +252,7 @@ pyiptv /path/to/your/playlist.m3u
 <summary><strong>🐧 Linux (Ubuntu/Debian)</strong></summary>
 
 ```bash
-sudo apt install python3-pip qt6-multimedia-dev
+sudo apt install python3-pip qt6-multimedia-dev ffmpeg
 ```
 </details>
 
@@ -100,7 +260,7 @@ sudo apt install python3-pip qt6-multimedia-dev
 <summary><strong>🎩 Linux (Fedora/CentOS)</strong></summary>
 
 ```bash
-sudo dnf install python3-pip qt6-qtmultimedia-devel
+sudo dnf install python3-pip qt6-qtmultimedia-devel ffmpeg
 ```
 </details>
 
@@ -108,14 +268,31 @@ sudo dnf install python3-pip qt6-qtmultimedia-devel
 <summary><strong>🍎 macOS</strong></summary>
 
 ```bash
-brew install python qt6
+brew install python qt6 ffmpeg
 ```
 </details>
 
 <details>
 <summary><strong>🪟 Windows</strong></summary>
 
-No additional system dependencies required - PySide6 includes all necessary Qt libraries.
+**FFmpeg Installation Required:**
+
+1. Download FFmpeg from [https://ffmpeg.org/download.html](https://ffmpeg.org/download.html)
+2. Extract the binaries to `ffmpeg_binaries/bin/` in your PyIPTV directory
+3. Required files:
+   - `ffmpeg.exe`
+   - `ffprobe.exe`
+
+Alternatively, install via package manager:
+```bash
+# Using Chocolatey
+choco install ffmpeg
+
+# Using Scoop
+scoop install ffmpeg
+```
+
+No additional Qt dependencies required - PySide6 includes all necessary Qt libraries.
 </details>
 
 ## ⚙️ Configuration
@@ -237,6 +414,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🙏 Acknowledgments
 
 - Most of the codebase for PyIPTV was generated by Claude Sonnet 4
+- Enhanced by [zinzied](https://github.com/zinzied) (zinzied@gmail.com)
 - Built with [PySide6](https://doc.qt.io/qtforpython/) - Qt for Python
 - Inspired by the need for a modern, cross-platform IPTV player
 - Thanks to the open-source community for tools and libraries

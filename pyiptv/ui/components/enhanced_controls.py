@@ -1,15 +1,15 @@
-from PySide6.QtWidgets import (
-    QWidget,
-    QHBoxLayout,
-    QVBoxLayout,
-    QPushButton,
-    QSlider,
-    QLabel,
-    QFrame,
-    QComboBox,
-)
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import (
+    QComboBox,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSlider,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 class EnhancedControlBar(QWidget):
@@ -20,10 +20,12 @@ class EnhancedControlBar(QWidget):
     # Signals
     play_pause_clicked = Signal()
     stop_clicked = Signal()
+    record_clicked = Signal()  # New recording signal
     fullscreen_clicked = Signal()
     volume_changed = Signal(int)
     seek_requested = Signal(float)  # 0.0 to 1.0
     audio_track_changed = Signal(int)  # Track index
+    subtitle_track_changed = Signal(str)  # Track ID
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -96,8 +98,45 @@ class EnhancedControlBar(QWidget):
         self.stop_btn.setToolTip("Stop")
         self.stop_btn.clicked.connect(self.stop_clicked)
 
+        # Record button
+        self.record_btn = QPushButton("🔴 REC")
+        self.record_btn.setToolTip("Start Recording (Ctrl+R)")
+        self.record_btn.setMinimumWidth(60)
+        self.record_btn.setMaximumWidth(80)
+        self.record_btn.setMinimumHeight(30)
+        self.record_btn.clicked.connect(self.record_clicked)
+        self.record_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 12px;
+                font-weight: bold;
+                border: 2px solid #dc3545;
+                border-radius: 6px;
+                background-color: transparent;
+                color: #dc3545;
+                padding: 6px 8px;
+                min-height: 24px;
+            }
+            QPushButton:hover {
+                background-color: #dc3545;
+                color: white;
+            }
+            QPushButton:pressed {
+                background-color: #c82333;
+            }
+            QPushButton:disabled {
+                color: #6c757d;
+                border-color: #6c757d;
+                background-color: transparent;
+            }
+        """)
+
         controls_layout.addWidget(self.play_pause_btn)
         controls_layout.addWidget(self.stop_btn)
+        controls_layout.addWidget(self.record_btn)
+
+        # Ensure record button is visible
+        self.record_btn.setVisible(True)
+        self.record_btn.show()
 
         # Spacer
         controls_layout.addStretch()
@@ -145,6 +184,25 @@ class EnhancedControlBar(QWidget):
 
         controls_layout.addLayout(audio_layout)
 
+        # Subtitle track selector (compact)
+        subtitle_layout = QHBoxLayout()
+        subtitle_layout.setSpacing(5)
+
+        self.subtitle_icon = QLabel("📝")
+        self.subtitle_icon.setToolTip("Subtitle Track")
+
+        self.subtitle_track_combo = QComboBox()
+        self.subtitle_track_combo.setMaximumWidth(120)
+        self.subtitle_track_combo.setToolTip("Select subtitle track")
+        self.subtitle_track_combo.addItem("No tracks")
+        self.subtitle_track_combo.setEnabled(False)
+        self.subtitle_track_combo.currentIndexChanged.connect(self._on_subtitle_track_changed)
+
+        subtitle_layout.addWidget(self.subtitle_icon)
+        subtitle_layout.addWidget(self.subtitle_track_combo)
+
+        controls_layout.addLayout(subtitle_layout)
+
         # Fullscreen button
         self.fullscreen_btn = QPushButton()
         self.fullscreen_btn.setIcon(QIcon.fromTheme("view-fullscreen"))
@@ -181,6 +239,65 @@ class EnhancedControlBar(QWidget):
         else:
             self.fullscreen_btn.setIcon(QIcon.fromTheme("view-fullscreen"))
             self.fullscreen_btn.setToolTip("Fullscreen (F11)")
+
+    def update_recording_state(self, is_recording, recording_count=0):
+        """Update the record button state."""
+        if is_recording:
+            if recording_count > 1:
+                self.record_btn.setText(f"🔴 {recording_count}")
+                self.record_btn.setToolTip(f"Recording {recording_count} channels (Click to stop current)")
+            else:
+                self.record_btn.setText("⏹️ STOP")
+                self.record_btn.setToolTip("Stop Recording (Ctrl+R)")
+
+            # Update style for active recording
+            self.record_btn.setStyleSheet("""
+                QPushButton {
+                    font-size: 12px;
+                    font-weight: bold;
+                    border: 2px solid #dc3545;
+                    border-radius: 6px;
+                    background-color: #dc3545;
+                    color: white;
+                    padding: 6px 8px;
+                    min-height: 24px;
+                }
+                QPushButton:hover {
+                    background-color: #c82333;
+                }
+                QPushButton:pressed {
+                    background-color: #a71e2a;
+                }
+            """)
+        else:
+            self.record_btn.setText("🔴 REC")
+            self.record_btn.setToolTip("Start Recording (Ctrl+R)")
+
+            # Reset to default style
+            self.record_btn.setStyleSheet("""
+                QPushButton {
+                    font-size: 12px;
+                    font-weight: bold;
+                    border: 2px solid #dc3545;
+                    border-radius: 6px;
+                    background-color: transparent;
+                    color: #dc3545;
+                    padding: 6px 8px;
+                    min-height: 24px;
+                }
+                QPushButton:hover {
+                    background-color: #dc3545;
+                    color: white;
+                }
+                QPushButton:pressed {
+                    background-color: #c82333;
+                }
+                QPushButton:disabled {
+                    color: #6c757d;
+                    border-color: #6c757d;
+                    background-color: transparent;
+                }
+            """)
 
     def update_time(self, position, duration):
         """Update time display and seek bar."""
@@ -295,6 +412,10 @@ class EnhancedControlBar(QWidget):
         """Set the media player instance."""
         self.media_player = media_player
 
+    def set_subtitle_manager(self, subtitle_manager):
+        """Set the subtitle manager instance."""
+        self.subtitle_manager = subtitle_manager
+
     def _on_audio_track_changed(self, index):
         """Handle audio track selection change."""
         if not self.media_player or not self.audio_track_combo.isEnabled():
@@ -305,6 +426,15 @@ class EnhancedControlBar(QWidget):
             success = self.media_player.set_audio_track(track_index)
             if success:
                 self.audio_track_changed.emit(track_index)
+
+    def _on_subtitle_track_changed(self, index):
+        """Handle subtitle track selection change."""
+        if not hasattr(self, 'subtitle_manager') or not self.subtitle_track_combo.isEnabled():
+            return
+
+        track_id = self.subtitle_track_combo.itemData(index)
+        if track_id is not None:
+            self.subtitle_track_changed.emit(track_id)
 
     def refresh_audio_tracks(self):
         """Refresh the list of available audio tracks."""
@@ -361,18 +491,74 @@ class EnhancedControlBar(QWidget):
         finally:
             self.audio_track_combo.blockSignals(False)
 
+    def refresh_subtitle_tracks(self):
+        """Refresh the list of available subtitle tracks."""
+        if not hasattr(self, 'subtitle_manager'):
+            self.subtitle_track_combo.clear()
+            self.subtitle_track_combo.addItem("No tracks")
+            self.subtitle_track_combo.setEnabled(False)
+            return
+
+        try:
+            # Clear existing items
+            self.subtitle_track_combo.blockSignals(True)
+            self.subtitle_track_combo.clear()
+
+            # Get available subtitle tracks
+            subtitle_tracks = self.subtitle_manager.get_available_tracks()
+
+            if not subtitle_tracks:
+                self.subtitle_track_combo.addItem("No tracks")
+                self.subtitle_track_combo.setEnabled(False)
+            else:
+                self.subtitle_track_combo.setEnabled(True)
+
+                # Add "None" option to disable subtitles
+                self.subtitle_track_combo.addItem("None", "")
+
+                # Add tracks to combo box
+                for track in subtitle_tracks:
+                    track_text = track.display_name
+                    self.subtitle_track_combo.addItem(track_text, track.id)
+
+                # Try to select current active track
+                current_track = self.subtitle_manager.current_track
+                if current_track:
+                    for i in range(self.subtitle_track_combo.count()):
+                        if self.subtitle_track_combo.itemData(i) == current_track.id:
+                            self.subtitle_track_combo.setCurrentIndex(i)
+                            break
+
+        except Exception as e:
+            print(f"Error refreshing subtitle tracks: {e}")
+            self.subtitle_track_combo.clear()
+            self.subtitle_track_combo.addItem("Error")
+            self.subtitle_track_combo.setEnabled(False)
+        finally:
+            self.subtitle_track_combo.blockSignals(False)
+
     def on_media_loaded(self):
         """Call this when new media is loaded."""
-        # Immediately reset the dropdown
+        # Immediately reset the audio dropdown
         self.audio_track_combo.clear()
         self.audio_track_combo.addItem("Loading tracks...")
         self.audio_track_combo.setEnabled(False)
 
+        # Immediately reset the subtitle dropdown
+        self.subtitle_track_combo.clear()
+        self.subtitle_track_combo.addItem("Loading tracks...")
+        self.subtitle_track_combo.setEnabled(False)
+
         # Delay refresh to allow media to fully load
         QTimer.singleShot(2000, self.refresh_audio_tracks)
+        QTimer.singleShot(3000, self.refresh_subtitle_tracks)  # Slightly later for subtitles
 
     def on_media_stopped(self):
         """Call this when media is stopped."""
         self.audio_track_combo.clear()
         self.audio_track_combo.addItem("No tracks")
         self.audio_track_combo.setEnabled(False)
+
+        self.subtitle_track_combo.clear()
+        self.subtitle_track_combo.addItem("No tracks")
+        self.subtitle_track_combo.setEnabled(False)

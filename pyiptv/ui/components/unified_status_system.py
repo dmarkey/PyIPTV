@@ -1,8 +1,9 @@
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton, QSizePolicy
-from PySide6.QtCore import QObject, Signal, QTimer, QPropertyAnimation, QByteArray
 import time
-from typing import Optional, List
 from enum import Enum
+from typing import List, Optional
+
+from PySide6.QtCore import QByteArray, QObject, QPropertyAnimation, QTimer, Signal
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget
 
 
 class StatusLevel(Enum):
@@ -344,6 +345,7 @@ class StatusManager(QObject):
         super().__init__()
         self.status_bar: Optional[UnifiedStatusBar] = None
         self.operation_statuses = {}  # Track operation-related statuses
+        self.persistent_status_id: Optional[str] = None  # Track persistent status message
 
     def set_status_bar(self, status_bar: UnifiedStatusBar):
         """Set the status bar widget."""
@@ -409,6 +411,24 @@ class StatusManager(QObject):
                 self.show_success(message)
             else:
                 self.show_error(message)
+
+    def show_persistent_info(self, text: str) -> str:
+        """Show persistent info message that doesn't auto-dismiss."""
+        if self.status_bar:
+            # Clear any existing persistent status
+            if self.persistent_status_id:
+                self.status_bar.dismiss_message(self.persistent_status_id)
+
+            # Show new persistent status (no timeout = persistent)
+            self.persistent_status_id = self.status_bar.show_info(text, timeout=0)
+            return self.persistent_status_id
+        return ""
+
+    def clear_persistent_info(self):
+        """Clear persistent info message."""
+        if self.persistent_status_id and self.status_bar:
+            self.status_bar.dismiss_message(self.persistent_status_id)
+            self.persistent_status_id = None
 
     def _on_status_action(self, status_id: str):
         """Handle status action clicks."""
