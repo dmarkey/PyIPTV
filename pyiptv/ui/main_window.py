@@ -124,6 +124,28 @@ class SettingsDialog(QDialog):
         )
         self.main_layout.addWidget(self.hw_accel_checkbox)
 
+        # Network timeout setting
+        self.timeout_label = QLabel("Network Timeout (seconds):")
+        self.timeout_input = QLineEdit(
+            str(self.settings_manager.get_setting("network_timeout_seconds", 30))
+        )
+        self.timeout_input.setToolTip(
+            "Timeout for network connections. Increase for slow/unstable connections."
+        )
+        self.main_layout.addWidget(self.timeout_label)
+        self.main_layout.addWidget(self.timeout_input)
+
+        # Max retries setting
+        self.retries_label = QLabel("Connection Retries:")
+        self.retries_input = QLineEdit(
+            str(self.settings_manager.get_setting("max_retries", 3))
+        )
+        self.retries_input.setToolTip(
+            "Number of times to retry failed connections. Higher values for unstable networks."
+        )
+        self.main_layout.addWidget(self.retries_label)
+        self.main_layout.addWidget(self.retries_input)
+
         # Hidden Categories (placeholder - more complex UI needed for managing this)
         self.hidden_cat_label = QLabel("Hidden Categories (comma-separated):")
         hidden_cats_list = self.settings_manager.get_setting("hidden_categories")
@@ -164,6 +186,29 @@ class SettingsDialog(QDialog):
         except ValueError:
             QMessageBox.warning(
                 self, "Invalid Input", "Buffering value must be a valid integer."
+            )
+            return
+
+        # Save network settings
+        try:
+            timeout_seconds = int(self.timeout_input.text())
+            if timeout_seconds < 1:
+                raise ValueError("Timeout must be at least 1 second.")
+            self.settings_manager.set_setting("network_timeout_seconds", timeout_seconds)
+        except ValueError:
+            QMessageBox.warning(
+                self, "Invalid Input", "Network timeout must be a valid integer (minimum 1)."
+            )
+            return
+
+        try:
+            max_retries = int(self.retries_input.text())
+            if max_retries < 0:
+                raise ValueError("Retries must be non-negative.")
+            self.settings_manager.set_setting("max_retries", max_retries)
+        except ValueError:
+            QMessageBox.warning(
+                self, "Invalid Input", "Max retries must be a valid integer."
             )
             return
 

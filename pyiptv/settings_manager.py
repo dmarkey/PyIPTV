@@ -45,6 +45,8 @@ class SettingsManager:
         "enable_channel_icons": False,  # Disable icons for large files by default
         "disable_subtitle_detection_for_live": True,  # Skip subtitle detection for live streams
         "disable_hardware_acceleration": False,  # Disable hardware video acceleration (fixes monitor issues)
+        "network_timeout_seconds": 30,  # Network timeout for connections
+        "max_retries": 3,  # Maximum connection retries
     }
 
     def __init__(self, settings_filename="pyiptv_settings.json"):

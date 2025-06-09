@@ -233,7 +233,7 @@ class QMediaVideoPlayer(QObject):
         print("QMediaPlayer resources released.")
 
     def _handle_error(self, error, error_string):
-        """Handle QMediaPlayer errors with AC3-specific guidance."""
+        """Handle QMediaPlayer errors with network-specific guidance."""
         error_messages = {
             QMediaPlayer.Error.NoError: "No error",
             QMediaPlayer.Error.ResourceError: "Resource error - unable to resolve media source",
@@ -246,10 +246,21 @@ class QMediaVideoPlayer(QObject):
         if error_string:
             error_message += f" - {error_string}"
 
-        # Add AC3-specific guidance for format errors
-        if error == QMediaPlayer.Error.FormatError and error_string:
+        # Add specific guidance for common errors
+        if error == QMediaPlayer.Error.ResourceError:
+            if "demuxing failed" in error_string.lower():
+                if "-10054" in error_string:
+                    error_message += "\n💡 Network Issue: Server connection was reset. Try:\n" \
+                                   "   • Different channel\n" \
+                                   "   • Increase buffering in Settings\n" \
+                                   "   • Check internet connection"
+                else:
+                    error_message += "\n💡 Stream Issue: Try a different channel or check your connection"
+        elif error == QMediaPlayer.Error.FormatError and error_string:
             if any(codec in error_string.lower() for codec in ["ac3", "ac-3", "dolby"]):
-                error_message += "\nHint: AC3 audio codec issue detected. Try installing additional codecs or check audio settings."
+                error_message += "\n💡 Audio Codec: AC3 audio issue. Try installing additional codecs"
+        elif error == QMediaPlayer.Error.NetworkError:
+            error_message += "\n💡 Network: Check your internet connection and firewall settings"
 
         print(f"QMediaPlayer error: {error_message}")
         self.playback_error_occurred.emit(error_message)
