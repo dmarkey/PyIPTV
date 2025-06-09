@@ -172,17 +172,18 @@ class SettingsManager:
         else:
             return obj
 
-    def get_setting(self, key):
+    def get_setting(self, key, default=None):
         """
         Retrieves a specific setting.
 
         Args:
             key (str): The key of the setting to retrieve.
+            default: The default value to return if the key doesn't exist.
 
         Returns:
-            The value of the setting, or None if the key doesn't exist.
+            The value of the setting, or the default value if the key doesn't exist.
         """
-        return self.settings.get(key)
+        return self.settings.get(key, default)
 
     def set_setting(self, key, value):
         """
