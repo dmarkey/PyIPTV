@@ -32,11 +32,12 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QColor, QPalette
 from PySide6.QtCore import QRect, QByteArray
 from PySide6.QtGui import QIcon
-from urllib.parse import urlparse
 
 from pyiptv.playlist_manager import PlaylistManager, PlaylistEntry
 from pyiptv.settings_manager import SettingsManager
 from pyiptv.ui.url_download_worker import URLDownloadWorker
+from pyiptv.ui.xtream_worker import XtreamFetchWorker
+from pyiptv.xtream_client import normalize_server_url
 
 
 class PlaylistListItemDelegate(QStyledItemDelegate):
@@ -89,6 +90,8 @@ class PlaylistListItemDelegate(QStyledItemDelegate):
         title_text = playlist.name
         if playlist.source_type == "url":
             title_text = f"🌐 {title_text}"
+        elif playlist.source_type == "xtream":
+            title_text = f"📡 {title_text}"
         else:
             title_text = f"📁 {title_text}"
 
@@ -167,10 +170,12 @@ class AddPlaylistDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Add Playlist")
         self.setModal(True)
-        self.setMinimumSize(500, 300)
+        self.setMinimumSize(520, 460)
+        self.resize(560, 500)
 
         self.init_ui()
         self.source_type_changed()
+        self.adjustSize()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -192,13 +197,16 @@ class AddPlaylistDialog(QDialog):
         self.source_type_group = QButtonGroup()
         self.file_radio = QRadioButton("Local File")
         self.url_radio = QRadioButton("URL")
+        self.xtream_radio = QRadioButton("Xtream Codes")
         self.file_radio.setChecked(True)
 
         self.source_type_group.addButton(self.file_radio, 0)
         self.source_type_group.addButton(self.url_radio, 1)
+        self.source_type_group.addButton(self.xtream_radio, 2)
 
         source_layout.addWidget(self.file_radio)
         source_layout.addWidget(self.url_radio)
+        source_layout.addWidget(self.xtream_radio)
 
         layout.addWidget(source_group)
 
@@ -243,8 +251,40 @@ class AddPlaylistDialog(QDialog):
         url_info.setStyleSheet("color: gray; font-size: 10px;")
         url_layout.addWidget(url_info)
 
+        # Xtream Codes input
+        self.xtream_widget = QWidget()
+        xtream_form = QFormLayout(self.xtream_widget)
+        xtream_form.setContentsMargins(0, 4, 0, 4)
+        xtream_form.setVerticalSpacing(10)
+        xtream_form.setHorizontalSpacing(10)
+        xtream_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        xtream_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+
+        self.xtream_server_input = QLineEdit()
+        self.xtream_server_input.setPlaceholderText("http://host:port")
+        self.xtream_server_input.setMinimumHeight(28)
+        self.xtream_user_input = QLineEdit()
+        self.xtream_user_input.setPlaceholderText("Username")
+        self.xtream_user_input.setMinimumHeight(28)
+        self.xtream_pass_input = QLineEdit()
+        self.xtream_pass_input.setPlaceholderText("Password")
+        self.xtream_pass_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.xtream_pass_input.setMinimumHeight(28)
+
+        xtream_form.addRow("Server:", self.xtream_server_input)
+        xtream_form.addRow("Username:", self.xtream_user_input)
+        xtream_form.addRow("Password:", self.xtream_pass_input)
+
+        xtream_info = QLabel(
+            "Credentials are stored in plain text in playlists.json."
+        )
+        xtream_info.setStyleSheet("color: gray; font-size: 10px;")
+        xtream_info.setWordWrap(True)
+        xtream_form.addRow("", xtream_info)
+
         input_layout.addWidget(self.file_widget)
         input_layout.addWidget(self.url_widget)
+        input_layout.addWidget(self.xtream_widget)
 
         layout.addWidget(input_group)
 
@@ -265,9 +305,9 @@ class AddPlaylistDialog(QDialog):
 
     def source_type_changed(self):
         """Handle source type radio button changes."""
-        is_file = self.file_radio.isChecked()
-        self.file_widget.setVisible(is_file)
-        self.url_widget.setVisible(not is_file)
+        self.file_widget.setVisible(self.file_radio.isChecked())
+        self.url_widget.setVisible(self.url_radio.isChecked())
+        self.xtream_widget.setVisible(self.xtream_radio.isChecked())
 
     def browse_file(self):
         """Open file browser for M3U files."""
@@ -316,27 +356,46 @@ class AddPlaylistDialog(QDialog):
                 raise ValueError("Please select a file")
             if not os.path.exists(source):
                 raise ValueError("Selected file does not exist")
-            source_type = "file"
-        else:
+            return {"name": name, "source": source, "source_type": "file"}
+        if self.url_radio.isChecked():
             source = self.url_input.text().strip()
             if not source:
                 raise ValueError("Please enter a URL")
             if not source.startswith(("http://", "https://")):
                 raise ValueError("URL must start with http:// or https://")
-            source_type = "url"
-
-        return {"name": name, "source": source, "source_type": source_type}
+            return {"name": name, "source": source, "source_type": "url"}
+        # Xtream
+        server = self.xtream_server_input.text().strip()
+        user = self.xtream_user_input.text()
+        pwd = self.xtream_pass_input.text()
+        if not server:
+            raise ValueError("Please enter a server URL")
+        if not user:
+            raise ValueError("Please enter a username")
+        if not pwd:
+            raise ValueError("Please enter a password")
+        try:
+            server = normalize_server_url(server)
+        except ValueError as e:
+            raise ValueError(f"Invalid server URL: {e}")
+        return {
+            "name": name,
+            "source_type": "xtream",
+            "server_url": server,
+            "username": user,
+            "password": pwd,
+        }
 
     def accept(self):
-        """Override accept to handle URL downloads."""
+        """Override accept to handle URL downloads and Xtream pre-flight auth."""
         try:
             data = self.get_playlist_data()
 
             if data["source_type"] == "url":
-                # Show download dialog for URL playlists
                 self.download_url_playlist(data)
+            elif data["source_type"] == "xtream":
+                self.authenticate_xtream(data)
             else:
-                # For file playlists, proceed normally
                 super().accept()
 
         except ValueError as e:
@@ -417,6 +476,56 @@ class AddPlaylistDialog(QDialog):
         QMessageBox.critical(
             self, "Download Failed", f"Failed to download playlist:\n{error}"
         )
+
+    def authenticate_xtream(self, playlist_data):
+        """Validate Xtream credentials by fetching categories + streams."""
+        progress_dialog = QProgressDialog(
+            "Authenticating...", "Cancel", 0, 100, self
+        )
+        progress_dialog.setWindowFlags(
+            progress_dialog.windowFlags()
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+        )
+        progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        progress_dialog.setAutoClose(True)
+        progress_dialog.setAutoReset(True)
+        progress_dialog.show()
+        progress_dialog.raise_()
+        progress_dialog.activateWindow()
+
+        self.xtream_worker = XtreamFetchWorker(
+            playlist_data["server_url"],
+            playlist_data["username"],
+            playlist_data["password"],
+        )
+        self.xtream_worker.progress_updated.connect(progress_dialog.setValue)
+        self.xtream_worker.status_updated.connect(progress_dialog.setLabelText)
+        self.xtream_worker.fetch_completed.connect(
+            lambda channels, cats, user_info: self.on_xtream_auth_success(
+                channels, cats, user_info, playlist_data, progress_dialog
+            )
+        )
+        self.xtream_worker.fetch_failed.connect(
+            lambda error: self.on_xtream_auth_failed(error, progress_dialog)
+        )
+        progress_dialog.canceled.connect(self.xtream_worker.cancel_download)
+        self.xtream_worker.start()
+
+    def on_xtream_auth_success(
+        self, channels, categories, user_info, playlist_data, progress_dialog
+    ):
+        """Credentials validated; cache the fetched data and accept the dialog."""
+        progress_dialog.close()
+        # Stash the fetched payload so PlaylistManagerWindow.add_playlist() can
+        # seed the JSON cache immediately — first-open is then instant.
+        self.xtream_initial_payload = (channels, categories)
+        self.xtream_channel_count = len(channels)
+        super().accept()
+
+    def on_xtream_auth_failed(self, error, progress_dialog):
+        progress_dialog.close()
+        QMessageBox.critical(self, "Xtream Login Failed", error)
 
 
 class PlaylistManagerWindow(QMainWindow):
@@ -580,6 +689,8 @@ class PlaylistManagerWindow(QMainWindow):
         # Set icon based on source type
         if playlist.source_type == "url":
             item.setText(f"🌐 {playlist.name}")
+        elif playlist.source_type == "xtream":
+            item.setText(f"📡 {playlist.name}")
         else:
             item.setText(f"📁 {playlist.name}")
 
@@ -602,8 +713,31 @@ class PlaylistManagerWindow(QMainWindow):
             try:
                 data = dialog.get_playlist_data()
 
-                # Handle URL playlists that were downloaded
-                if hasattr(dialog, "temp_downloaded_file") and hasattr(
+                if data["source_type"] == "xtream":
+                    playlist = self.playlist_manager.add_xtream_playlist(
+                        data["name"],
+                        data["server_url"],
+                        data["username"],
+                        data["password"],
+                    )
+                    # Seed the JSON cache with the payload we already fetched
+                    # during auth — first app-open is then instant.
+                    initial = getattr(dialog, "xtream_initial_payload", None)
+                    if initial is not None:
+                        from pyiptv import xtream_cache
+
+                        channels, categories = initial
+                        xtream_cache.save(
+                            self.playlist_manager._get_cache_directory(),
+                            playlist.server_url,
+                            playlist.username,
+                            channels,
+                            categories,
+                        )
+                        self.playlist_manager.update_channel_count(
+                            playlist.id, len(channels)
+                        )
+                elif hasattr(dialog, "temp_downloaded_file") and hasattr(
                     dialog, "original_url"
                 ):
                     # For URL playlists, add the playlist with the original URL
@@ -823,6 +957,90 @@ class PlaylistManagerWindow(QMainWindow):
             self, "Refresh Failed", f"Failed to refresh playlist:\n{error}"
         )
 
+    def refresh_xtream_playlist(self):
+        """Re-fetch categories + streams from the Xtream server and update cache."""
+        current_item = self.playlist_list.currentItem()
+        if not current_item:
+            return
+        playlist = current_item.data(Qt.ItemDataRole.UserRole)
+        if playlist.source_type != "xtream":
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Refresh Xtream Source",
+            f"Re-fetch channels and categories for '{playlist.name}'?\n\n"
+            f"Server: {playlist.server_url}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        progress_dialog = QProgressDialog(
+            "Refreshing Xtream source...", "Cancel", 0, 100, self
+        )
+        progress_dialog.setWindowFlags(
+            progress_dialog.windowFlags()
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+        )
+        progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        progress_dialog.setAutoClose(True)
+        progress_dialog.setAutoReset(True)
+        progress_dialog.show()
+        progress_dialog.raise_()
+        progress_dialog.activateWindow()
+
+        self.xtream_refresh_worker = XtreamFetchWorker(
+            playlist.server_url, playlist.username, playlist.password
+        )
+        self.xtream_refresh_worker.progress_updated.connect(progress_dialog.setValue)
+        self.xtream_refresh_worker.status_updated.connect(progress_dialog.setLabelText)
+        self.xtream_refresh_worker.fetch_completed.connect(
+            lambda channels, cats, user_info: self.on_xtream_refresh_completed(
+                channels, cats, playlist, progress_dialog
+            )
+        )
+        self.xtream_refresh_worker.fetch_failed.connect(
+            lambda error: self.on_xtream_refresh_failed(error, progress_dialog)
+        )
+        progress_dialog.canceled.connect(self.xtream_refresh_worker.cancel_download)
+        self.xtream_refresh_worker.start()
+
+    def on_xtream_refresh_completed(self, channels, categories, playlist, progress_dialog):
+        from pyiptv import xtream_cache
+
+        try:
+            xtream_cache.save(
+                self.playlist_manager._get_cache_directory(),
+                playlist.server_url,
+                playlist.username,
+                channels,
+                categories,
+            )
+            self.playlist_manager.update_channel_count(playlist.id, len(channels))
+            playlist.update_last_opened()
+            self.playlist_manager.save_playlists()
+            self.playlist_manager.playlist_updated.emit(playlist)
+            progress_dialog.close()
+            QMessageBox.information(
+                self,
+                "Refresh Complete",
+                f"Refreshed '{playlist.name}' — {len(channels)} channels cached.",
+            )
+            self.statusBar().showMessage(f"Refreshed Xtream source: {playlist.name}")
+            self.load_playlists()
+        except Exception as e:
+            progress_dialog.close()
+            QMessageBox.critical(
+                self, "Refresh Error", f"Failed to update cache:\n{e}"
+            )
+
+    def on_xtream_refresh_failed(self, error, progress_dialog):
+        progress_dialog.close()
+        QMessageBox.critical(self, "Refresh Failed", error)
+
     def launch_selected_playlist(self):
         """Launch the PyIPTV player with the selected playlist."""
         current_item = self.playlist_list.currentItem()
@@ -887,6 +1105,9 @@ class PlaylistManagerWindow(QMainWindow):
         if playlist.source_type == "url":
             refresh_playlist_action = menu.addAction("Refresh Playlist")
             refresh_playlist_action.triggered.connect(self.refresh_url_playlist)
+        elif playlist.source_type == "xtream":
+            refresh_xtream_action = menu.addAction("Refresh Xtream Source")
+            refresh_xtream_action.triggered.connect(self.refresh_xtream_playlist)
 
         menu.exec(self.playlist_list.mapToGlobal(position))
 
@@ -967,6 +1188,8 @@ class PlaylistManagerWindow(QMainWindow):
                 item.setText(playlist.name)
                 if playlist.source_type == "url":
                     item.setText(f"🌐 {playlist.name}")
+                elif playlist.source_type == "xtream":
+                    item.setText(f"📡 {playlist.name}")
                 else:
                     item.setText(f"📁 {playlist.name}")
                 break

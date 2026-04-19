@@ -19,6 +19,7 @@
 
 ### Core Functionality
 - 📺 **M3U Playlist Support** - Load and manage IPTV playlists in M3U format
+- 📡 **Xtream Codes API** - Native support for Xtream-panel providers with server-side categories and on-device caching
 - 🎨 **Modern Qt6 Interface** - Built with PySide6 for a responsive, native desktop experience
 - 📂 **Category Organization** - Automatically organize channels by categories
 - 🔍 **Search & Filtering** - Quickly find channels with real-time search
@@ -146,6 +147,36 @@ http://example.com/stream1.m3u8
 #EXTINF:-1 tvg-id="channel2" tvg-name="Another Channel" group-title="Movies",Movie Channel
 http://example.com/stream2.m3u8
 ```
+
+## 📡 Xtream Codes Sources
+
+PyIPTV talks to Xtream-panel providers natively — no need to hand-build an M3U URL.
+
+### Adding a source
+
+1. Open the Playlist Manager (`Ctrl+P` or the initial launch window).
+2. Click **Add Playlist** and pick **Xtream Codes**.
+3. Enter:
+   - **Server** — `http://host:port` (or `https://`)
+   - **Username**
+   - **Password**
+4. Save. The dialog authenticates against `player_api.php` before committing, so invalid credentials are rejected up front.
+
+### How it works
+
+| Piece | Detail |
+|---|---|
+| API | `player_api.php` — `get_live_categories`, `get_live_streams`, `get_short_epg` |
+| Stream URLs | Constructed client-side as `{server}/live/{user}/{pass}/{stream_id}.{ext}` |
+| Cache | Transformed channel list is pickled under `~/.config/PyIPTV/playlist_cache/xtream_<hash>.pkl` with a **6-hour TTL** — second open is instant and survives brief network outages (falls back to the stale cache on fetch failure) |
+| Refresh | Right-click the playlist in the manager → **Refresh Xtream Source** to invalidate the cache and re-fetch |
+
+### Scope & limitations
+
+- **Live TV only** — VOD and series are not yet surfaced (planned).
+- **EPG** — `get_short_epg` is wired up and cached in memory, but no guide UI is shown yet (planned).
+- **Credential storage** — username and password are stored **in plaintext** in `~/.config/PyIPTV/playlists.json`, matching the existing settings-file pattern. If that's a concern for your environment, use a dedicated account with low `max_connections` and a unique password.
+- **CDN user-agent** — Qt's media backend sends its own UA when fetching stream URLs. Some Cloudflare-fronted providers reject non-browser UAs. API calls are unaffected (the client sends a browser UA), but if playback fails with resource/network errors on every channel, the provider is likely UA-gating streams and a local proxy would be required (not implemented yet).
 
 ## 🏗️ Architecture
 

@@ -28,6 +28,7 @@ from pyiptv.ui.playlist_manager_window import PlaylistManagerWindow
 from pyiptv.qmedia_player import QMediaVideoPlayer
 from pyiptv.settings_manager import SettingsManager
 from pyiptv.playlist_manager import PlaylistManager
+from pyiptv.sleep_inhibitor import SleepInhibitor
 from pyiptv.ui.components.virtualized_channel_list import VirtualizedChannelList
 from pyiptv.ui.components.video_placeholder import VideoPlaceholder
 from pyiptv.ui.components.enhanced_controls import EnhancedControlBar
@@ -199,6 +200,7 @@ class MainWindow(QMainWindow):
         self.is_fullscreen = False
         self.original_parent = None
         self.original_layout = None
+        self.sleep_inhibitor = SleepInhibitor()
 
         self.init_ui()
         self.init_player()
@@ -446,7 +448,9 @@ class MainWindow(QMainWindow):
                 self.current_m3u_path
             )
 
-            if playlist_entry and playlist_entry.source_type == "url":
+            if playlist_entry and playlist_entry.source_type == "xtream":
+                self.load_xtream_playlist(playlist_entry)
+            elif playlist_entry and playlist_entry.source_type == "url":
                 # Check if we have a cached file
                 if playlist_entry.has_cached_file():
                     # Use cached file directly
@@ -554,6 +558,76 @@ class MainWindow(QMainWindow):
                 os.remove(file_path)
         except Exception as e:
             print(f"Warning: Could not remove temporary file {file_path}: {e}")
+
+    def load_xtream_playlist(self, playlist_entry):
+        """Load an Xtream playlist from cache if fresh, else fetch from the server."""
+        from pyiptv import xtream_cache
+        from pyiptv.ui.xtream_worker import XtreamFetchWorker
+
+        self.current_xtream_entry = playlist_entry
+        cache_dir = self.playlist_manager._get_cache_directory()
+
+        cached = xtream_cache.load(
+            cache_dir, playlist_entry.server_url, playlist_entry.username
+        )
+        if cached is not None:
+            channels, categories = cached
+            self.status_manager.show_info(
+                f"Loading cached Xtream data: {playlist_entry.name}"
+            )
+            self.on_m3u_parsed_success(channels, categories)
+            return
+
+        # No fresh cache — fetch from server. Falls back to stale cache on failure.
+        self.status_manager.show_info(
+            f"Fetching Xtream data: {playlist_entry.name}"
+        )
+        self.xtream_worker = XtreamFetchWorker(
+            playlist_entry.server_url,
+            playlist_entry.username,
+            playlist_entry.password,
+        )
+        self.xtream_worker.status_updated.connect(self.status_manager.show_info)
+        self.xtream_worker.fetch_completed.connect(self._on_xtream_fetch_completed)
+        self.xtream_worker.fetch_failed.connect(self._on_xtream_fetch_failed)
+        self.xtream_worker.start()
+
+    def _on_xtream_fetch_completed(self, channels, categories, user_info):
+        entry = getattr(self, "current_xtream_entry", None)
+        if entry is not None:
+            from pyiptv import xtream_cache
+
+            try:
+                xtream_cache.save(
+                    self.playlist_manager._get_cache_directory(),
+                    entry.server_url,
+                    entry.username,
+                    channels,
+                    categories,
+                )
+            except Exception as e:
+                print(f"Warning: could not save Xtream cache: {e}")
+        self.on_m3u_parsed_success(channels, categories)
+
+    def _on_xtream_fetch_failed(self, error):
+        # Fall back to stale cache so the user still gets something on flaky connections.
+        entry = getattr(self, "current_xtream_entry", None)
+        if entry is not None:
+            from pyiptv import xtream_cache
+
+            stale = xtream_cache.load_stale(
+                self.playlist_manager._get_cache_directory(),
+                entry.server_url,
+                entry.username,
+            )
+            if stale is not None:
+                self.status_manager.show_warning(
+                    f"Xtream fetch failed, using stale cache: {error}"
+                )
+                channels, categories = stale
+                self.on_m3u_parsed_success(channels, categories)
+                return
+        self.status_manager.show_error(f"Xtream fetch failed: {error}")
 
     def parse_m3u_file(self, filepath):
         """Parse M3U file using the new background operation system."""
@@ -974,6 +1048,9 @@ class MainWindow(QMainWindow):
         # Enable focus and key events for the video widget
         self.video_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
+        # Keep the display awake while fullscreen video is on screen.
+        self.sleep_inhibitor.inhibit()
+
         print("Entered fullscreen mode")
 
     def exit_fullscreen(self):
@@ -1013,6 +1090,8 @@ class MainWindow(QMainWindow):
         # Update state
         self.is_fullscreen = False
         self.control_bar.update_fullscreen_state(False)
+
+        self.sleep_inhibitor.release()
 
         print("Exited fullscreen mode")
 

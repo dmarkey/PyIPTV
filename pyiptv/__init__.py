@@ -5,7 +5,7 @@ A modern, feature-rich IPTV player built with PySide6/Qt6, designed for
 streaming live television content from M3U playlists.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __author__ = "David Markey"
 __email__ = "david@dmarkey.com"
 __license__ = "MIT"

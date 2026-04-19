@@ -22,17 +22,24 @@ class PlaylistEntry:
         last_opened: Optional[str] = None,
         channel_count: int = 0,
         cached_file_path: Optional[str] = None,
+        server_url: Optional[str] = None,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
     ):
         self.id = playlist_id or str(uuid.uuid4())
         self.name = name
-        self.source = source  # File path or URL
-        self.source_type = source_type  # "file" or "url"
+        self.source = source  # File path, URL, or xtream://{id} sentinel
+        self.source_type = source_type  # "file", "url", or "xtream"
         self.created_at = created_at or datetime.now().isoformat()
         self.last_opened = last_opened
         self.channel_count = channel_count
         self.cached_file_path = (
             cached_file_path  # For URL playlists, path to cached local file
         )
+        # Xtream-only fields
+        self.server_url = server_url
+        self.username = username
+        self.password = password
 
     def to_dict(self) -> dict:
         """Convert playlist entry to dictionary for serialization."""
@@ -45,6 +52,9 @@ class PlaylistEntry:
             "last_opened": self.last_opened,
             "channel_count": self.channel_count,
             "cached_file_path": self.cached_file_path,
+            "server_url": self.server_url,
+            "username": self.username,
+            "password": self.password,
         }
 
     @classmethod
@@ -59,6 +69,9 @@ class PlaylistEntry:
             last_opened=data.get("last_opened"),
             channel_count=data.get("channel_count", 0),
             cached_file_path=data.get("cached_file_path"),
+            server_url=data.get("server_url"),
+            username=data.get("username"),
+            password=data.get("password"),
         )
 
     def update_last_opened(self):
@@ -79,6 +92,11 @@ class PlaylistEntry:
                 return response.status_code == 200
             except (requests.RequestException, OSError):
                 return False
+        elif self.source_type == "xtream":
+            # Treat xtream as always "available" — we can't cheaply probe it
+            # here without a full auth round-trip, and the JSON cache handles
+            # offline graceful-degradation at load time.
+            return bool(self.server_url and self.username and self.password)
         return False
 
     def get_effective_path(self) -> str:
@@ -92,6 +110,8 @@ class PlaylistEntry:
                 if (self.cached_file_path and os.path.exists(self.cached_file_path))
                 else self.source
             )
+        # xtream entries don't have a parseable path — callers must branch on
+        # source_type before getting here.
         return self.source
 
     def has_cached_file(self) -> bool:
@@ -104,6 +124,7 @@ class PlaylistEntry:
 
     def needs_refresh(self) -> bool:
         """Check if a file-based playlist needs to be refreshed based on file modification time."""
+        # Xtream sources use a time-based JSON cache in MainWindow, not mtime.
         if self.source_type != "file":
             return False
 
@@ -217,6 +238,43 @@ class PlaylistManager(QObject):
         # Emit signal
         self.playlist_added.emit(playlist)
 
+        return playlist
+
+    def add_xtream_playlist(
+        self,
+        name: str,
+        server_url: str,
+        username: str,
+        password: str,
+    ) -> PlaylistEntry:
+        """Add a new Xtream Codes playlist."""
+        from pyiptv.xtream_client import normalize_server_url
+
+        if not name:
+            raise ValueError("Playlist name is required")
+        if not server_url or not username or not password:
+            raise ValueError("Server URL, username, and password are all required")
+
+        normalized = normalize_server_url(server_url)
+
+        existing_names = [p.name.lower() for p in self.playlists.values()]
+        if name.lower() in existing_names:
+            raise ValueError(f"Playlist with name '{name}' already exists")
+
+        playlist = PlaylistEntry(
+            name=name,
+            # Use a sentinel source URI so get_playlist_by_source() stays unique.
+            source="",
+            source_type="xtream",
+            server_url=normalized,
+            username=username,
+            password=password,
+        )
+        playlist.source = f"xtream://{playlist.id}"
+
+        self.playlists[playlist.id] = playlist
+        self.save_playlists()
+        self.playlist_added.emit(playlist)
         return playlist
 
     def remove_playlist(self, playlist_id: str) -> bool:

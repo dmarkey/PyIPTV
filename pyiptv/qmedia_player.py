@@ -1,5 +1,5 @@
 from PySide6.QtCore import QObject, Signal, QUrl, QTimer, Qt
-from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices
 from PySide6.QtMultimedia import QMediaMetaData
 
 
@@ -23,10 +23,18 @@ class QMediaVideoPlayer(QObject):
         # Initialize QAudioOutput with the simplest constructor to avoid Pylance issues.
         # We will rely on Qt's default format negotiation.
         self.audio_output = QAudioOutput()
+        self.audio_output.setDevice(QMediaDevices.defaultAudioOutput())
         print("Initialized QAudioOutput with default constructor.")
 
         # Set up audio output for the player
         self.player.setAudioOutput(self.audio_output)
+
+        # Follow system default-device changes (e.g. Bluetooth headphones
+        # connecting mid-playback). Qt doesn't do this automatically on macOS.
+        self._media_devices = QMediaDevices(self)
+        self._media_devices.audioOutputsChanged.connect(
+            self._on_audio_outputs_changed
+        )
 
         if self.video_widget:
             # Configure video widget for better compatibility
@@ -227,6 +235,24 @@ class QMediaVideoPlayer(QObject):
 
         print(f"QMediaPlayer error: {error_message}")
         self.playback_error_occurred.emit(error_message)
+
+    def _on_audio_outputs_changed(self):
+        """Rebind to the current system default audio output.
+
+        Fires when a device is added/removed (e.g. Bluetooth headphones
+        connecting). Without this, QAudioOutput stays pinned to whatever
+        device was default at construction time.
+        """
+        if self.audio_output is None:
+            return
+        new_default = QMediaDevices.defaultAudioOutput()
+        if new_default.isNull():
+            return
+        current = self.audio_output.device()
+        if current.id() == new_default.id():
+            return
+        self.audio_output.setDevice(new_default)
+        print(f"Audio output switched to: {new_default.description()}")
 
     def _on_metadata_changed(self):
         """Handle metadata changes from QMediaPlayer."""
