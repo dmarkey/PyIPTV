@@ -20,8 +20,8 @@ from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
     QComboBox,
 )
-from PySide6.QtGui import QIcon, QKeySequence, QAction, QShortcut
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QIcon, QKeySequence, QAction, QShortcut, QCursor
+from PySide6.QtCore import Qt, QTimer, QEvent
 from pyiptv.ui.themes import ThemeManager
 from pyiptv.ui.playlist_manager_window import PlaylistManagerWindow
 
@@ -32,6 +32,8 @@ from pyiptv.sleep_inhibitor import SleepInhibitor
 from pyiptv.ui.components.virtualized_channel_list import VirtualizedChannelList
 from pyiptv.ui.components.video_placeholder import VideoPlaceholder
 from pyiptv.ui.components.enhanced_controls import EnhancedControlBar
+from pyiptv.ui.components.program_info_overlay import ProgramInfoOverlay
+from pyiptv.ui.components.tv_guide_view import TvGuideView
 from pyiptv.ui.components.unified_status_system import UnifiedStatusBar, StatusManager
 from pyiptv.ui.components.simplified_operations import SimplifiedOperationManager
 from pyiptv.ui.themes import ModernDarkTheme
@@ -202,6 +204,23 @@ class MainWindow(QMainWindow):
         self.original_layout = None
         self.sleep_inhibitor = SleepInhibitor()
 
+        # EPG state (populated for Xtream sources when enable_epg is on).
+        self.epg_index = {}
+        self._epg_worker = None
+        # Refresh the visible now/next lines every minute so they roll over
+        # when programs change without needing a full EPG re-fetch.
+        self._epg_refresh_timer = QTimer(self)
+        self._epg_refresh_timer.setInterval(60_000)
+        self._epg_refresh_timer.timeout.connect(self._on_epg_refresh_tick)
+
+        # Fullscreen overlay-controls auto-hide timer. Started/reset on mouse
+        # movement over the fullscreen video; fires after idle to hide the bar.
+        self._fs_original_control_stylesheet = ""
+        self._fs_idle_timer = QTimer(self)
+        self._fs_idle_timer.setInterval(2500)
+        self._fs_idle_timer.setSingleShot(True)
+        self._fs_idle_timer.timeout.connect(self._hide_overlay_controls)
+
         self.init_ui()
         self.init_player()
         self.setup_shortcuts()
@@ -242,6 +261,12 @@ class MainWindow(QMainWindow):
         playlist_manager_action.triggered.connect(self.open_playlist_manager)
         file_menu.addAction(playlist_manager_action)
 
+        self.tv_guide_action = QAction("&TV Guide", self)
+        self.tv_guide_action.setShortcut("Ctrl+G")
+        self.tv_guide_action.setCheckable(True)
+        self.tv_guide_action.triggered.connect(self.toggle_tv_guide)
+        file_menu.addAction(self.tv_guide_action)
+
         file_menu.addSeparator()
 
         settings_action = QAction(
@@ -261,12 +286,32 @@ class MainWindow(QMainWindow):
 
         # --- Main Content Area (Splitter) ---
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.main_layout.addWidget(self.splitter)
+        self.main_layout.addWidget(self.splitter, stretch=1)
+
+        # TV Guide view — hidden by default, toggled via Ctrl+G / menu.
+        # Replaces the splitter in the main layout when active. The video
+        # keeps playing audio/video underneath; click a program → tune (or
+        # catchup) and the guide auto-hides.
+        self.tv_guide_view = TvGuideView()
+        self.tv_guide_view.setVisible(False)
+        self.tv_guide_view.program_clicked.connect(self._on_guide_program_clicked)
+        self.main_layout.addWidget(self.tv_guide_view, stretch=1)
 
         # Left Pane (Categories and Channels)
         self.left_pane = QWidget()
         self.left_layout = QVBoxLayout(self.left_pane)
         self.splitter.addWidget(self.left_pane)
+
+        # Xtream account-status chip (hidden until an Xtream playlist loads)
+        self.xtream_status_label = QLabel("")
+        self.xtream_status_label.setWordWrap(True)
+        self.xtream_status_label.setVisible(False)
+        self.xtream_status_label.setStyleSheet(
+            "QLabel { padding: 4px 8px; border-radius: 4px;"
+            " background: rgba(100, 160, 220, 40);"
+            " border: 1px solid rgba(100, 160, 220, 120); }"
+        )
+        self.left_layout.addWidget(self.xtream_status_label)
 
         # Category List with search
         self.category_label = QLabel("Categories:")
@@ -286,6 +331,11 @@ class MainWindow(QMainWindow):
         category_search_layout.addWidget(self.category_clear_btn)
 
         self.category_list_widget = QListWidget()
+        # Per-pixel scrolling instead of per-item — feels right on trackpads
+        # and still works for regular mouse wheels.
+        self.category_list_widget.setVerticalScrollMode(
+            QListWidget.ScrollMode.ScrollPerPixel
+        )
         self.category_list_widget.itemClicked.connect(self.on_category_selected)
 
         self.left_layout.addWidget(self.category_label)
@@ -334,6 +384,12 @@ class MainWindow(QMainWindow):
         self.video_stack.addWidget(self.video_widget)  # Index 1
         self.video_stack.setCurrentIndex(0)  # Start with placeholder
 
+        # 'Now playing' EPG program info, shown above the video. Sits in the
+        # normal layout flow so we don't fight QVideoWidget's native layer;
+        # in fullscreen it reparents as a top-level overlay at the top.
+        self.program_info_overlay = ProgramInfoOverlay()
+        self.right_layout.addWidget(self.program_info_overlay)
+
         self.right_layout.addWidget(self.video_stack, stretch=1)
 
         # Enhanced Control Bar with integrated audio track selector
@@ -375,6 +431,14 @@ class MainWindow(QMainWindow):
         # Connect to metadata updates
         if hasattr(self.player, "metadata_updated"):
             self.player.metadata_updated.connect(self._on_metadata_updated)
+
+        # Surface connection state (connecting / buffering / ready) via the
+        # video placeholder. Avoids the "black screen with no feedback" gap
+        # when a stream takes a few seconds to negotiate.
+        if hasattr(self.player, "connection_state_changed"):
+            self.player.connection_state_changed.connect(
+                self._on_connection_state_changed
+            )
 
         # Timer to update UI based on player state (e.g., play/pause icon)
         self.player_state_timer = QTimer(self)
@@ -440,8 +504,32 @@ class MainWindow(QMainWindow):
             False
         )  # Update button to "Play" as playback likely stopped
         self.video_stack.setCurrentIndex(0)  # Show placeholder on error
+        self.video_placeholder.set_status(
+            "Playback error", error_message[:80] if error_message else ""
+        )
+
+    def _on_connection_state_changed(self, state, message):
+        """Reflect stream state on the video placeholder.
+
+        While connecting/buffering, keep the placeholder visible with an
+        informative subtitle. On 'ready', switch to the video widget.
+        """
+        if state == "ready":
+            self.video_stack.setCurrentIndex(1)
+            self.video_placeholder.set_status("")  # restore default idle copy
+        elif state in ("connecting", "buffering"):
+            self.video_stack.setCurrentIndex(0)
+            title = "Connecting…" if state == "connecting" else "Buffering…"
+            self.video_placeholder.set_status(title, message or "")
+        elif state == "idle":
+            self.video_stack.setCurrentIndex(0)
+            self.video_placeholder.set_status("")  # default idle copy
+        # "error" is handled by _on_playback_error which has richer context.
 
     def load_initial_m3u(self):
+        # Hide the Xtream chip by default; load_xtream_playlist re-shows it.
+        if hasattr(self, "xtream_status_label"):
+            self.xtream_status_label.setVisible(False)
         if self.current_m3u_path:
             # Check if this is a URL playlist by looking up in playlist manager
             playlist_entry = self.playlist_manager.get_playlist_by_source(
@@ -571,11 +659,13 @@ class MainWindow(QMainWindow):
             cache_dir, playlist_entry.server_url, playlist_entry.username
         )
         if cached is not None:
-            channels, categories = cached
+            channels, categories, user_info = cached
             self.status_manager.show_info(
                 f"Loading cached Xtream data: {playlist_entry.name}"
             )
             self.on_m3u_parsed_success(channels, categories)
+            self._report_xtream_user_info(playlist_entry, user_info)
+            self._load_epg_for(playlist_entry)
             return
 
         # No fresh cache — fetch from server. Falls back to stale cache on failure.
@@ -604,10 +694,14 @@ class MainWindow(QMainWindow):
                     entry.username,
                     channels,
                     categories,
+                    user_info,
                 )
             except Exception as e:
                 print(f"Warning: could not save Xtream cache: {e}")
         self.on_m3u_parsed_success(channels, categories)
+        if entry is not None:
+            self._report_xtream_user_info(entry, user_info)
+            self._load_epg_for(entry)
 
     def _on_xtream_fetch_failed(self, error):
         # Fall back to stale cache so the user still gets something on flaky connections.
@@ -624,10 +718,278 @@ class MainWindow(QMainWindow):
                 self.status_manager.show_warning(
                     f"Xtream fetch failed, using stale cache: {error}"
                 )
-                channels, categories = stale
+                channels, categories, user_info = stale
                 self.on_m3u_parsed_success(channels, categories)
+                self._report_xtream_user_info(entry, user_info)
                 return
         self.status_manager.show_error(f"Xtream fetch failed: {error}")
+
+    def _load_epg_for(self, entry):
+        """Populate `self.epg_index` for an Xtream entry, using cache if fresh."""
+        if not self.settings_manager.get_setting("enable_epg"):
+            self.epg_index = {}
+            self._apply_epg_to_ui()
+            return
+
+        from pyiptv import xtream_cache
+
+        cache_dir = self.playlist_manager._get_cache_directory()
+        cached = xtream_cache.load_epg(cache_dir, entry.server_url, entry.username)
+        if cached is not None:
+            self.epg_index = cached
+            self._apply_epg_to_ui()
+            return
+
+        # No fresh cache — fetch in the background. UI keeps working; EPG lines
+        # appear once the worker completes.
+        from pyiptv.ui.xtream_epg_worker import XtreamEpgWorker
+
+        self._epg_worker = XtreamEpgWorker(
+            entry.server_url, entry.username, entry.password, parent=self
+        )
+        self._epg_worker.epg_ready.connect(
+            lambda index, e=entry: self._on_epg_ready(index, e)
+        )
+        self._epg_worker.epg_failed.connect(self._on_epg_failed)
+        self._epg_worker.start()
+
+    def _on_epg_ready(self, index, entry):
+        from pyiptv import xtream_cache
+
+        self.epg_index = index or {}
+        try:
+            xtream_cache.save_epg(
+                self.playlist_manager._get_cache_directory(),
+                entry.server_url,
+                entry.username,
+                self.epg_index,
+            )
+        except Exception as e:
+            print(f"Warning: could not save EPG cache: {e}")
+        self._apply_epg_to_ui()
+
+    def _on_epg_failed(self, error):
+        # Non-fatal — channel list keeps working without EPG.
+        self.status_manager.show_warning(f"EPG unavailable: {error}")
+
+    def _apply_epg_to_ui(self):
+        """Wire the loaded index into the channel list and kick the minute timer."""
+        if self.epg_index:
+            self.channel_list_widget.set_epg_provider(self._now_next_text_for)
+            if not self._epg_refresh_timer.isActive():
+                self._epg_refresh_timer.start()
+            self._refresh_program_info_overlay()
+        else:
+            self.channel_list_widget.set_epg_provider(None)
+            self._epg_refresh_timer.stop()
+            self.program_info_overlay.clear()
+
+    def _now_next_text_for(self, channel):
+        """EPG provider callback for each channel list row."""
+        tvg_id = (channel.get("tvg-id") or "").strip()
+        if not tvg_id:
+            return None
+        programs = self.epg_index.get(tvg_id)
+        if not programs:
+            return None
+        from pyiptv.epg import format_now_next
+
+        return format_now_next(programs) or None
+
+    def _on_epg_refresh_tick(self):
+        """Every minute: repaint visible rows so now/next rolls over."""
+        self.channel_list_widget.viewport.update()
+        self._refresh_program_info_overlay()
+        if self.tv_guide_view.isVisible():
+            # Redraw the guide so the "now" line and current-program
+            # highlight advance without needing a fresh EPG fetch.
+            self.tv_guide_view._canvas.update()
+
+    def toggle_tv_guide(self):
+        """Swap between the normal player view and the TV guide grid."""
+        show = not self.tv_guide_view.isVisible()
+        if show:
+            # Scope the guide to the currently-selected category so the grid
+            # stays manageable; "All Channels" falls back to the full list.
+            key = getattr(self, "current_selected_category_key", None)
+            if key and key != "ALL_CHANNELS_KEY":
+                channels = self.categories_data.get(key, [])
+            else:
+                channels = self.all_channels_data or []
+            self.tv_guide_view.set_data(channels, self.epg_index or {})
+            self.splitter.setVisible(False)
+            self.tv_guide_view.setVisible(True)
+        else:
+            self.tv_guide_view.setVisible(False)
+            self.splitter.setVisible(True)
+        if hasattr(self, "tv_guide_action"):
+            self.tv_guide_action.setChecked(show)
+
+    def _on_guide_program_clicked(self, channel, program, is_catchup):
+        """User clicked a program strip (or an empty cell) in the guide."""
+        import time as _time
+
+        if program is None:
+            # Empty cell → just tune to the channel.
+            self.toggle_tv_guide()
+            self.play_channel(channel)
+            return
+
+        p_start, p_stop, p_title, _p_desc = program
+        now_ts = int(_time.time())
+
+        if p_start <= now_ts < p_stop:
+            # Currently airing → live stream.
+            self.toggle_tv_guide()
+            self.play_channel(channel)
+            return
+
+        if p_start > now_ts:
+            from datetime import datetime as _dt
+
+            when = _dt.fromtimestamp(p_start).strftime("%a %H:%M")
+            self.status_manager.show_info(
+                f"'{p_title}' is scheduled for {when}", timeout=3000
+            )
+            return
+
+        # Past program — try catchup if the channel supports it.
+        if is_catchup:
+            self.toggle_tv_guide()
+            self._play_catchup(channel, program)
+        else:
+            self.status_manager.show_warning(
+                f"'{p_title}' is not available for catchup on this channel",
+                timeout=3000,
+            )
+
+    def _play_catchup(self, channel, program):
+        """Construct and play the Xtream timeshift URL for a past program."""
+        stream_id = channel.get("xtream_stream_id")
+        if stream_id is None:
+            self.status_manager.show_error("Channel has no Xtream stream id")
+            return
+        p_start, p_stop, p_title, _ = program
+        duration_minutes = max(1, (p_stop - p_start) // 60)
+
+        entry = getattr(self, "current_xtream_entry", None)
+        if entry is None:
+            self.status_manager.show_error("Xtream credentials unavailable")
+            return
+
+        from pyiptv.xtream_client import XtreamClient
+
+        client = XtreamClient(entry.server_url, entry.username, entry.password)
+        # Catchup URL container: use .ts.
+        #   - .m3u8 variant: server returns a valid HLS VOD playlist but the
+        #     per-segment /hls/<hash>/...ts?stream_id=N URLs return 403 for
+        #     authenticated users — segments aren't reachable, playback fails.
+        #   - .ts variant: plays fine, but the server wraps the stream with a
+        #     non-MPEG-TS header (first bytes aren't 0x47), so mid-file byte
+        #     seeks land on packet-misaligned offsets. Seeking is therefore
+        #     limited / broken on this provider — provider-side limitation.
+        url = client.build_catchup_url(
+            int(stream_id),
+            int(p_start),
+            int(duration_minutes),
+            container="ts",
+        )
+        # Play directly — don't route through play_channel because we don't
+        # want to overwrite last_played_url with a catchup URL.
+        buffering_ms = self.settings_manager.get_setting("buffering_ms") or 1500
+        self.status_manager.show_info(
+            f"Catchup: {p_title}", timeout=3000
+        )
+        self.player.play_media(url, buffering_ms=buffering_ms)
+        self.control_bar.on_media_loaded()
+        self.control_bar.update_play_state(True)
+
+    def _refresh_program_info_overlay(self):
+        """Update the 'Now playing' overlay for the currently-playing channel."""
+        url = getattr(self.player, "current_url", None)
+        if not url or not self.epg_index:
+            self.program_info_overlay.clear()
+            return
+        channel = None
+        for ch in self.all_channels_data or []:
+            if ch.get("url") == url:
+                channel = ch
+                break
+        if channel is None:
+            self.program_info_overlay.clear()
+            return
+        tvg_id = (channel.get("tvg-id") or "").strip()
+        if not tvg_id:
+            self.program_info_overlay.clear()
+            return
+        programs = self.epg_index.get(tvg_id)
+        if not programs:
+            self.program_info_overlay.clear()
+            return
+        from pyiptv.epg import find_current_next
+        from datetime import datetime
+
+        current, next_ = find_current_next(programs)
+        if not current:
+            # Before the first program — show "Next: X" if we have one.
+            if next_:
+                start = datetime.fromtimestamp(next_[0]).strftime("%H:%M")
+                self.program_info_overlay.set_program(
+                    f"Next: {next_[2]}", f"starts {start}", next_[3]
+                )
+            else:
+                self.program_info_overlay.clear()
+            return
+
+        start = datetime.fromtimestamp(current[0]).strftime("%H:%M")
+        stop = datetime.fromtimestamp(current[1]).strftime("%H:%M")
+        next_suffix = ""
+        if next_:
+            next_start = datetime.fromtimestamp(next_[0]).strftime("%H:%M")
+            next_suffix = f"  ·  Next {next_start}: {next_[2]}"
+        self.program_info_overlay.set_program(
+            current[2], f"{start}–{stop}{next_suffix}", current[3]
+        )
+
+    def _report_xtream_user_info(self, entry, user_info):
+        """Surface account expiry and connection limits for an Xtream source.
+
+        Shown in a persistent chip above the category list so the user always
+        knows which source is loaded and when it expires. Also emits a warning
+        toast (via the status bar) for non-Active accounts — that one's
+        transient on purpose, so it can catch attention once and then fade.
+        """
+        from pyiptv.xtream_client import format_user_info
+
+        summary = format_user_info(user_info or {})
+        status = str((user_info or {}).get("status", "")).strip().lower()
+        is_bad = bool(status) and status != "active" or (
+            summary is not None and "EXPIRED" in summary
+        )
+
+        if summary:
+            text = f"📡 {entry.name} — {summary}"
+            self.xtream_status_label.setText(text)
+            self.xtream_status_label.setVisible(True)
+            if is_bad:
+                # Red-ish tint for expired/banned accounts.
+                self.xtream_status_label.setStyleSheet(
+                    "QLabel { padding: 4px 8px; border-radius: 4px;"
+                    " background: rgba(220, 90, 90, 50);"
+                    " border: 1px solid rgba(220, 90, 90, 150); }"
+                )
+            else:
+                self.xtream_status_label.setStyleSheet(
+                    "QLabel { padding: 4px 8px; border-radius: 4px;"
+                    " background: rgba(100, 160, 220, 40);"
+                    " border: 1px solid rgba(100, 160, 220, 120); }"
+                )
+            if is_bad:
+                self.status_manager.show_warning(f"{entry.name}: {summary}")
+        else:
+            # No account info to show — hide the chip (e.g. offline stale cache
+            # from before user_info was captured).
+            self.xtream_status_label.setVisible(False)
 
     def parse_m3u_file(self, filepath):
         """Parse M3U file using the new background operation system."""
@@ -805,14 +1167,16 @@ class MainWindow(QMainWindow):
     def play_channel(self, channel_info):
         url = channel_info.get("url")
         if url:
-            self.status_manager.show_info(f"Playing: {channel_info.get('name', url)}")
-            buffering_ms = self.settings_manager.get_setting("buffering_ms")
+            self.status_manager.show_info(
+                f"Playing: {channel_info.get('name', url)}", timeout=2000
+            )
+            buffering_ms = self.settings_manager.get_setting("buffering_ms") or 1500
 
-            # Switch to video widget and show loading state
-            self.video_stack.setCurrentIndex(1)
-            self.show_loading_state(True)
-
-            buffering_ms = buffering_ms or 1500  # Default fallback
+            # Don't flip the stack here — _on_connection_state_changed manages
+            # the placeholder ("Connecting…" / "Buffering…") vs video widget
+            # based on QMediaPlayer's mediaStatus. The player emits "connecting"
+            # synchronously before setSource, so the placeholder shows up right
+            # away without a black-screen flash.
             self.player.play_media(url, buffering_ms=buffering_ms)
             self.settings_manager.set_setting("last_played_url", url)
 
@@ -821,9 +1185,7 @@ class MainWindow(QMainWindow):
 
             # Update UI
             self.control_bar.update_play_state(True)
-
-            # Hide loading state after a short delay
-            QTimer.singleShot(2000, lambda: self.show_loading_state(False))
+            self._refresh_program_info_overlay()
         else:
             self.status_manager.show_error("Channel URL not found")
 
@@ -1026,8 +1388,13 @@ class MainWindow(QMainWindow):
         self.original_parent = self.video_stack.parent()
         self.right_layout.removeWidget(self.video_stack)
 
-        # Set video stack as a standalone fullscreen window
+        # Set video stack as a standalone fullscreen window.
+        # FramelessWindowHint is critical on macOS — without it, showFullScreen
+        # uses native macOS fullscreen which creates a new Space. Tool-window
+        # overlays stay on the original Space and become invisible under the
+        # fullscreen video. Frameless keeps everything on one Space.
         self.video_stack.setParent(None)
+        self.video_stack.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self.video_stack.showFullScreen()
         self.video_stack.setFocus()
 
@@ -1051,6 +1418,9 @@ class MainWindow(QMainWindow):
         # Keep the display awake while fullscreen video is on screen.
         self.sleep_inhibitor.inhibit()
 
+        # Bring the control bar into the fullscreen window as an overlay.
+        self._attach_overlay_controls()
+
         print("Entered fullscreen mode")
 
     def exit_fullscreen(self):
@@ -1058,8 +1428,14 @@ class MainWindow(QMainWindow):
         if not self.is_fullscreen:
             return
 
+        # Put the control bar back into the docked layout before tearing down
+        # the fullscreen window.
+        self._detach_overlay_controls()
+
         # Remove the video stack from fullscreen
         self.video_stack.showNormal()
+        # Clear the frameless flag we set in enter_fullscreen.
+        self.video_stack.setWindowFlag(Qt.WindowType.FramelessWindowHint, False)
 
         # Put it back in the original layout
         if self.original_parent:
@@ -1094,6 +1470,172 @@ class MainWindow(QMainWindow):
         self.sleep_inhibitor.release()
 
         print("Exited fullscreen mode")
+
+    def _attach_overlay_controls(self):
+        """Float the control bar (and program-info overlay) as borderless
+        top-level windows over the video.
+
+        QVideoWidget on macOS renders through a native CALayer that draws on
+        top of any sibling Qt widget in the same window, so an overlay
+        parented to the video_stack disappears behind the video. Making the
+        bars their own frameless always-on-top windows dodges that — they're
+        separate OS-level surfaces that sit above the fullscreen video layer.
+        """
+        self._fs_control_bar_docked_index = self.right_layout.indexOf(self.control_bar)
+        self.right_layout.removeWidget(self.control_bar)
+
+        self._fs_original_control_stylesheet = self.control_bar.styleSheet() or ""
+        self.control_bar.setStyleSheet(
+            self._fs_original_control_stylesheet
+            + "\nEnhancedControlBar { background: rgba(20, 20, 20, 220);"
+            " border-radius: 8px; }"
+        )
+
+        # Reparent as a top-level frameless tool window.
+        self.control_bar.setParent(None)
+        self.control_bar.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.Tool
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.NoDropShadowWindowHint
+        )
+        self.control_bar.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self._position_overlay_controls()
+        # Start hidden — the user reveals the overlay with a click on the
+        # video. Auto-hides again after idle.
+        self.control_bar.hide()
+
+        # Mirror the same treatment for the program-info overlay so it's
+        # visible on the fullscreen Space along with the controls.
+        self._fs_program_info_docked_index = self.right_layout.indexOf(
+            self.program_info_overlay
+        )
+        self.right_layout.removeWidget(self.program_info_overlay)
+        self.program_info_overlay.setParent(None)
+        self.program_info_overlay.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.Tool
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.NoDropShadowWindowHint
+        )
+        self.program_info_overlay.setAttribute(
+            Qt.WidgetAttribute.WA_ShowWithoutActivating
+        )
+        self._position_program_info_overlay()
+        self.program_info_overlay.hide()
+
+        # Listen for mouse-button clicks anywhere (global app filter). Clicks
+        # on the video reveal the overlay; clicks on the overlay itself let
+        # its own handlers run and also keep it visible (timer reset).
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
+
+    def _detach_overlay_controls(self):
+        """Reverse of _attach_overlay_controls. Called on exit_fullscreen."""
+        self._fs_idle_timer.stop()
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
+
+        self.control_bar.setStyleSheet(self._fs_original_control_stylesheet)
+        # Clear the top-level window flags before re-parenting into the layout.
+        self.control_bar.hide()
+        self.control_bar.setParent(None)
+        self.control_bar.setWindowFlags(Qt.WindowType.Widget)
+        idx = getattr(self, "_fs_control_bar_docked_index", -1)
+        if idx is None or idx < 0:
+            idx = self.right_layout.count()
+        self.right_layout.insertWidget(idx, self.control_bar)
+        self.control_bar.show()
+
+        # Program-info overlay back to the docked flow.
+        self.program_info_overlay.hide()
+        self.program_info_overlay.setParent(None)
+        self.program_info_overlay.setWindowFlags(Qt.WindowType.Widget)
+        pi_idx = getattr(self, "_fs_program_info_docked_index", 0)
+        if pi_idx is None or pi_idx < 0:
+            pi_idx = 0
+        self.right_layout.insertWidget(pi_idx, self.program_info_overlay)
+        # Let the overlay's own set_program / clear decide whether it's visible.
+        self._refresh_program_info_overlay()
+
+    def _position_overlay_controls(self):
+        """Center the overlay control bar near the bottom of the fullscreen screen."""
+        screen = self.video_stack.screen() or self.screen()
+        if screen is None:
+            return
+        geom = screen.geometry()
+        margin = 30
+        hint = self.control_bar.sizeHint()
+        height = max(hint.height(), 56)
+        width = max(480, min(geom.width() - 2 * margin, 1200))
+        x = geom.x() + (geom.width() - width) // 2
+        y = geom.y() + geom.height() - height - margin
+        self.control_bar.setGeometry(x, y, width, height)
+
+    def _position_program_info_overlay(self):
+        """Anchor the program-info overlay near the top of the fullscreen screen."""
+        screen = self.video_stack.screen() or self.screen()
+        if screen is None:
+            return
+        geom = screen.geometry()
+        margin = 30
+        hint = self.program_info_overlay.sizeHint()
+        height = max(hint.height(), 64)
+        width = max(480, min(geom.width() - 2 * margin, 1200))
+        x = geom.x() + (geom.width() - width) // 2
+        y = geom.y() + margin
+        self.program_info_overlay.setGeometry(x, y, width, height)
+
+    def _show_overlay_controls(self):
+        if not self.is_fullscreen:
+            return
+        self.control_bar.show()
+        self.control_bar.raise_()
+        # Show program-info overlay alongside, but only if we actually have
+        # something to say about the current program.
+        current_title = self.program_info_overlay._title_label.text()
+        if current_title:
+            self._position_program_info_overlay()
+            self.program_info_overlay.show()
+            self.program_info_overlay.raise_()
+        self._fs_idle_timer.start()
+
+    def _hide_overlay_controls(self):
+        """Timer fired — hide unless the cursor is over the control bar itself."""
+        if not self.is_fullscreen:
+            return
+        cursor_pos = self.control_bar.mapFromGlobal(QCursor.pos())
+        if self.control_bar.rect().contains(cursor_pos):
+            # User is interacting; re-arm.
+            self._fs_idle_timer.start()
+            return
+        self.control_bar.hide()
+        self.program_info_overlay.hide()
+
+    def eventFilter(self, obj, event):
+        """Reveal the overlay controls on mouse click while fullscreen.
+
+        A single click on the video area shows the bar; clicks on the bar
+        itself (or its children) extend the visibility timer so interaction
+        doesn't get cut off. The double-click-to-exit-fullscreen handler
+        still runs via the existing mouseDoubleClickEvent override.
+        """
+        if self.is_fullscreen and event.type() == QEvent.Type.MouseButtonPress:
+            on_bar = obj is self.control_bar or (
+                hasattr(obj, "window") and obj.window() is self.control_bar
+            )
+            if on_bar:
+                self._fs_idle_timer.start()
+            else:
+                self._show_overlay_controls()
+        return super().eventFilter(obj, event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.is_fullscreen and self.control_bar.parent() is self.video_stack:
+            self._position_overlay_controls()
 
     def on_video_double_click_docked(self, event):
         """Handle double-click on video widget in docked mode."""

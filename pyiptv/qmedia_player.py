@@ -6,6 +6,10 @@ from PySide6.QtMultimedia import QMediaMetaData
 class QMediaVideoPlayer(QObject):
     playback_error_occurred = Signal(str)
     metadata_updated = Signal(dict)  # Signal for metadata updates
+    # Emitted as the user-facing stream state changes. state is one of:
+    # "connecting", "buffering", "ready", "idle", "error".
+    # message is a short human-readable string (may be empty for "ready").
+    connection_state_changed = Signal(str, str)
 
     def __init__(self, video_widget=None):
         """
@@ -96,6 +100,10 @@ class QMediaVideoPlayer(QObject):
         self.stop()  # Stop any currently playing media
 
         self.current_url = media_url
+        # Emit "connecting" immediately so the UI shows something right away;
+        # Qt's own mediaStatusChanged doesn't always fire LoadingMedia before
+        # setSource returns, and the gap feels like a freeze on slow streams.
+        self.connection_state_changed.emit("connecting", "Connecting to stream…")
         self.player.setSource(QUrl(media_url))
         self.player.play()
         print(f"Playing: {media_url}")
@@ -263,6 +271,21 @@ class QMediaVideoPlayer(QObject):
         if status == QMediaPlayer.MediaStatus.LoadedMedia:
             self._extract_metadata()
 
+        # Map Qt's media-status enum to a user-facing state.
+        status_map = {
+            QMediaPlayer.MediaStatus.LoadingMedia: ("connecting", "Connecting to stream…"),
+            QMediaPlayer.MediaStatus.StalledMedia: ("buffering", "Buffering…"),
+            QMediaPlayer.MediaStatus.BufferingMedia: ("buffering", "Buffering…"),
+            QMediaPlayer.MediaStatus.BufferedMedia: ("ready", ""),
+            QMediaPlayer.MediaStatus.LoadedMedia: ("ready", ""),
+            QMediaPlayer.MediaStatus.NoMedia: ("idle", ""),
+            QMediaPlayer.MediaStatus.EndOfMedia: ("idle", ""),
+            QMediaPlayer.MediaStatus.InvalidMedia: ("error", "Invalid media"),
+        }
+        mapped = status_map.get(status)
+        if mapped is not None:
+            self.connection_state_changed.emit(*mapped)
+
     def _check_metadata(self):
         """Periodically check for metadata updates."""
         if self.player is None or not self.player.source().isValid():
@@ -388,19 +411,7 @@ class QMediaVideoPlayer(QObject):
                     # Fallback if QMediaMetaData is not available or attributes don't exist
                     pass
 
-            # For HEVC streams, add some basic info we know from ffmpeg output
-            if (
-                self.current_url
-                and "hevc" not in metadata.get("video_codec", "").lower()
-            ):
-                # If we couldn't detect HEVC properly, but we know it's HEVC from context
-                metadata["video_codec"] = metadata.get("video_codec", "HEVC/H.265")
-
-            # Try to get framerate from available sources
-            # QMediaPlayer doesn't directly expose FPS, so we'll estimate or mark as unknown
-            metadata["fps"] = "25 fps"  # Based on ffmpeg output showing 25 fps
-
-            # Duration
+            # Duration — one derivable value we can report honestly.
             duration = self.get_duration()
             if duration > 0:
                 metadata["duration"] = self.get_duration_str()
@@ -411,21 +422,9 @@ class QMediaVideoPlayer(QObject):
             if self.current_url:
                 metadata["url"] = self.current_url
 
-            # Add resolution info if not detected from metadata
-            if "resolution" not in metadata:
-                metadata["resolution"] = "1280x720"  # Based on ffmpeg output
-
-            # Add audio codec if not detected (assume AC3 for streaming media)
-            if "audio_codec" not in metadata:
-                metadata["audio_codec"] = "AC3"
-
-            # Add audio bitrate if not detected
-            if "audio_bitrate" not in metadata:
-                metadata["audio_bitrate"] = "127 kbps"  # Based on ffmpeg output
-
-            # Add sample rate if not detected
-            if "sample_rate" not in metadata:
-                metadata["sample_rate"] = "44100 Hz"  # Based on ffmpeg output
+            # Don't fabricate resolution/fps/codec/bitrate/sample-rate. If Qt
+            # didn't report them, leave them absent so the UI shows "N/A"
+            # (metadata_display.py) instead of misleading hardcoded values.
 
             # Only emit if metadata has changed
             if metadata != self.current_metadata:

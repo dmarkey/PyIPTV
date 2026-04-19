@@ -10,10 +10,51 @@ interchangeably with M3U-parsed playlists.
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
 
 import requests
+
+
+def format_user_info(user_info: dict) -> Optional[str]:
+    """Format Xtream user_info for display. Returns None if nothing useful.
+
+    Expects the server's `user_info` block (exp_date, max_connections,
+    active_cons, status). All fields are strings or unix-timestamp strings
+    in the wild.
+    """
+    if not user_info:
+        return None
+
+    parts = []
+
+    status = str(user_info.get("status", "")).strip()
+    if status and status.lower() != "active":
+        parts.append(f"account {status}")
+
+    exp_raw = user_info.get("exp_date")
+    if exp_raw:
+        try:
+            exp = datetime.fromtimestamp(int(exp_raw), tz=timezone.utc)
+            days = (exp - datetime.now(tz=timezone.utc)).days
+            if days < 0:
+                parts.append("EXPIRED")
+            elif days == 0:
+                parts.append("expires today")
+            elif days <= 7:
+                parts.append(f"expires in {days} day{'s' if days != 1 else ''}")
+            else:
+                parts.append(f"expires {exp.strftime('%Y-%m-%d')}")
+        except (ValueError, TypeError, OSError):
+            pass
+
+    active = user_info.get("active_cons")
+    max_cons = user_info.get("max_connections")
+    if active is not None and max_cons is not None:
+        parts.append(f"{active}/{max_cons} connections")
+
+    return " · ".join(parts) if parts else None
 
 
 class XtreamError(Exception):
@@ -140,6 +181,29 @@ class XtreamClient:
             f"/{stream_id}.{container}"
         )
 
+    def build_catchup_url(
+        self,
+        stream_id: int,
+        start_ts: int,
+        duration_minutes: int,
+        container: str = "ts",
+    ) -> str:
+        """Build the path-style Xtream timeshift URL for a past program.
+
+        Format: {server}/timeshift/{user}/{pass}/{duration}/YYYY-MM-DD:HH-MM/{id}.{ext}
+        Most providers accept this; a handful use the query-style
+        /streaming/timeshift.php endpoint instead (not implemented).
+        """
+        from datetime import datetime, timezone
+
+        start = datetime.fromtimestamp(start_ts, tz=timezone.utc).strftime(
+            "%Y-%m-%d:%H-%M"
+        )
+        return (
+            f"{self.server_url}/timeshift/{self.username}/{self.password}"
+            f"/{duration_minutes}/{start}/{stream_id}.{container}"
+        )
+
     def fetch_all_live(
         self, progress_callback=None
     ) -> Tuple[List[dict], Dict[str, List[dict]], dict]:
@@ -200,6 +264,16 @@ class XtreamClient:
             group_title = category_name_by_id.get(str(cat_id), "Uncategorized")
             container = stream.get("container_extension") or "ts"
 
+            # Catchup / archive support — only some channels have it.
+            try:
+                tv_archive = int(stream.get("tv_archive") or 0)
+            except (TypeError, ValueError):
+                tv_archive = 0
+            try:
+                tv_archive_duration = int(stream.get("tv_archive_duration") or 0)
+            except (TypeError, ValueError):
+                tv_archive_duration = 0
+
             channel = {
                 "duration": "-1",
                 "name": name,
@@ -211,6 +285,8 @@ class XtreamClient:
                 # Xtream-specific — useful later for EPG hookup without
                 # breaking the existing consumer contract (extra keys are ignored).
                 "xtream_stream_id": int(stream_id),
+                "xtream_tv_archive": tv_archive,
+                "xtream_tv_archive_duration": tv_archive_duration,
             }
             channels.append(channel)
             categories.setdefault(group_title, []).append(channel)

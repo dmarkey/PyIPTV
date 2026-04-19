@@ -519,7 +519,7 @@ class AddPlaylistDialog(QDialog):
         progress_dialog.close()
         # Stash the fetched payload so PlaylistManagerWindow.add_playlist() can
         # seed the JSON cache immediately — first-open is then instant.
-        self.xtream_initial_payload = (channels, categories)
+        self.xtream_initial_payload = (channels, categories, user_info)
         self.xtream_channel_count = len(channels)
         super().accept()
 
@@ -726,13 +726,14 @@ class PlaylistManagerWindow(QMainWindow):
                     if initial is not None:
                         from pyiptv import xtream_cache
 
-                        channels, categories = initial
+                        channels, categories, user_info = initial
                         xtream_cache.save(
                             self.playlist_manager._get_cache_directory(),
                             playlist.server_url,
                             playlist.username,
                             channels,
                             categories,
+                            user_info,
                         )
                         self.playlist_manager.update_channel_count(
                             playlist.id, len(channels)
@@ -999,7 +1000,7 @@ class PlaylistManagerWindow(QMainWindow):
         self.xtream_refresh_worker.status_updated.connect(progress_dialog.setLabelText)
         self.xtream_refresh_worker.fetch_completed.connect(
             lambda channels, cats, user_info: self.on_xtream_refresh_completed(
-                channels, cats, playlist, progress_dialog
+                channels, cats, user_info, playlist, progress_dialog
             )
         )
         self.xtream_refresh_worker.fetch_failed.connect(
@@ -1008,7 +1009,9 @@ class PlaylistManagerWindow(QMainWindow):
         progress_dialog.canceled.connect(self.xtream_refresh_worker.cancel_download)
         self.xtream_refresh_worker.start()
 
-    def on_xtream_refresh_completed(self, channels, categories, playlist, progress_dialog):
+    def on_xtream_refresh_completed(
+        self, channels, categories, user_info, playlist, progress_dialog
+    ):
         from pyiptv import xtream_cache
 
         try:
@@ -1018,6 +1021,7 @@ class PlaylistManagerWindow(QMainWindow):
                 playlist.username,
                 channels,
                 categories,
+                user_info,
             )
             self.playlist_manager.update_channel_count(playlist.id, len(channels))
             playlist.update_last_opened()

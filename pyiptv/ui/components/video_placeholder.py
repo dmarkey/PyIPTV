@@ -24,6 +24,10 @@ class VideoPlaceholder(QWidget):
         self._animation_progress = 0.0
         self._pulse_opacity = 1.0
 
+        # Overridable status text (None = default idle copy).
+        self._status_title = None
+        self._status_subtitle = None
+
         # Setup animations
         self.setup_animations()
 
@@ -32,6 +36,16 @@ class VideoPlaceholder(QWidget):
 
         # Start animations
         self.start_animations()
+
+    def set_status(self, title, subtitle=""):
+        """Override the placeholder text (e.g. 'Connecting…'). Empty title resets."""
+        if not title:
+            self._status_title = None
+            self._status_subtitle = None
+        else:
+            self._status_title = title
+            self._status_subtitle = subtitle
+        self.update()
 
     def setup_ui(self):
         """Setup the placeholder UI elements."""
@@ -175,8 +189,8 @@ class VideoPlaceholder(QWidget):
         color = QColor(200, 200, 200, int(255 * self._pulse_opacity))
         painter.setPen(color)
 
-        # Draw main text
-        text = "No video playing"
+        # Draw main text (overridable for connecting/buffering/error states)
+        text = self._status_title or "No video playing"
         fm = QFontMetrics(font)
         text_width = fm.horizontalAdvance(text)
         painter.drawText(x - text_width // 2, y, text)
@@ -188,10 +202,16 @@ class VideoPlaceholder(QWidget):
         color.setAlpha(int(180 * self._pulse_opacity))
         painter.setPen(color)
 
-        subtitle = "Select a channel to start watching"
-        fm = QFontMetrics(font)
-        text_width = fm.horizontalAdvance(subtitle)
-        painter.drawText(x - text_width // 2, y + 25, subtitle)
+        if self._status_subtitle is not None:
+            subtitle = self._status_subtitle
+        elif self._status_title is None:
+            subtitle = "Select a channel to start watching"
+        else:
+            subtitle = ""
+        if subtitle:
+            fm = QFontMetrics(font)
+            text_width = fm.horizontalAdvance(subtitle)
+            painter.drawText(x - text_width // 2, y + 25, subtitle)
 
         painter.restore()
 

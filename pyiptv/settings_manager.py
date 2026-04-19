@@ -26,6 +26,7 @@ class SettingsManager:
         "progress_update_interval": 1000,  # Update progress every N channels
         "max_search_results": 50000,  # Limit search results for performance
         "enable_channel_icons": False,  # Disable icons for large files by default
+        "enable_epg": True,  # Download/display Xtream EPG (now/next on rows + details)
     }
 
     def __init__(self, settings_filename="pyiptv_settings.json"):

@@ -9,7 +9,9 @@ from PySide6.QtWidgets import (
     QPushButton,
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QRect
-from PySide6.QtGui import QPainter, QFontMetrics, QPalette
+from PySide6.QtGui import QPainter, QFontMetrics, QPalette, QColor, QPen, QFont
+
+from pyiptv.logo_cache import shared as shared_logo_cache
 
 
 class VirtualizedChannelList(QWidget):
@@ -30,7 +32,8 @@ class VirtualizedChannelList(QWidget):
         self._filtered_indices = []  # Maps filtered index to original index
 
         # Display settings
-        self.item_height = 24
+        self.item_height = 56
+        self.logo_size = 40
         self.visible_start_index = 0
         self.visible_count = 0
         self.selected_index = -1
@@ -39,6 +42,15 @@ class VirtualizedChannelList(QWidget):
         # Performance settings
         self.render_buffer = 5  # Extra items to render above/below visible area
         self.search_delay_ms = 300  # Delay before applying search filter
+
+        # Shared logo cache (async). Repaint viewport when a requested logo lands.
+        self._logo_cache = shared_logo_cache()
+        self._logo_cache.logo_ready.connect(self._on_logo_ready)
+
+        # Optional EPG provider: callable (channel_dict) -> str | None, returning
+        # the now/next line to render as a second-line subtitle. When None, the
+        # row shows only the channel name (existing behaviour).
+        self._epg_provider = None
 
         # UI setup
         self.setup_ui()
@@ -266,6 +278,20 @@ class VirtualizedChannelList(QWidget):
             return self._filtered_channels[self.selected_index]
         return None
 
+    def _on_logo_ready(self, url):
+        """Repaint the viewport when an async logo fetch lands."""
+        # Cheap: viewport paint only touches visible rows, so an unconditional
+        # update() is fine even if the URL isn't currently on screen.
+        self.viewport.update()
+
+    def set_epg_provider(self, provider):
+        """Wire an EPG lookup. `provider(channel_dict) -> str | None`.
+
+        Passing None removes any previously-set provider. Triggers a repaint.
+        """
+        self._epg_provider = provider
+        self.viewport.update()
+
 
 class ChannelViewport(QFrame):
     """Viewport widget for rendering visible channel items."""
@@ -312,6 +338,12 @@ class ChannelViewport(QFrame):
 
         font_metrics = QFontMetrics(self.font())
 
+        logo_size = self.parent_list.logo_size
+        logo_pad = (item_height - logo_size) // 2
+        logo_cache = self.parent_list._logo_cache
+        placeholder_color = QColor(text_color)
+        placeholder_color.setAlpha(60)
+
         for i in range(render_start, render_end):
             y_pos = (i - start_idx) * item_height
 
@@ -324,32 +356,138 @@ class ChannelViewport(QFrame):
             # Draw selection/hover background
             if i == self.parent_list.selected_index:
                 painter.fillRect(item_rect, selected_color)
-                painter.setPen(selected_text_color)
+                row_text_color = selected_text_color
             elif i == self.parent_list.hover_index:
                 hover_color = selected_color.lighter(150)
                 painter.fillRect(item_rect, hover_color)
-                painter.setPen(text_color)
+                row_text_color = text_color
             else:
-                painter.setPen(text_color)
+                row_text_color = text_color
 
-            # Draw channel name and category (if searching)
             channel = channels[i]
-            channel_name = channel.get("name", "Unknown Channel")
 
-            # If searching, show category info as well
+            # Logo cell on the left.
+            logo_rect = QRect(logo_pad, y_pos + logo_pad, logo_size, logo_size)
+            logo_url = channel.get("tvg-logo") or ""
+            pix = logo_cache.request(logo_url) if logo_url else None
+            if pix is not None and not pix.isNull():
+                scaled = pix.scaled(
+                    logo_size,
+                    logo_size,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                # Center within the logo cell (scaled may be narrower).
+                draw_x = logo_rect.x() + (logo_size - scaled.width()) // 2
+                draw_y = logo_rect.y() + (logo_size - scaled.height()) // 2
+                painter.drawPixmap(draw_x, draw_y, scaled)
+            else:
+                # Subtle placeholder box so rows line up before the logo loads.
+                painter.save()
+                painter.setPen(QPen(placeholder_color, 1))
+                painter.drawRoundedRect(logo_rect, 4, 4)
+                painter.restore()
+
+            # Text cell to the right of the logo.
+            channel_name = channel.get("name", "Unknown Channel")
             display_text = channel_name
             if self.parent_list.search_term:
                 category = channel.get("group-title", "")
                 if category and category != "Uncategorized":
                     display_text = f"{channel_name} [{category}]"
 
-            # Truncate text if too long
-            text_rect = item_rect.adjusted(8, 0, -8, 0)
-            elided_text = font_metrics.elidedText(
-                display_text, Qt.ElideRight, text_rect.width()
-            )
+            text_left = logo_rect.right() + 8
+            text_width = self.width() - text_left - 8
 
-            painter.drawText(text_rect, Qt.AlignVCenter, elided_text)
+            # Optional EPG now/next line as a second-row subtitle.
+            epg_text = ""
+            provider = self.parent_list._epg_provider
+            if provider is not None:
+                try:
+                    epg_text = provider(channel) or ""
+                except Exception:
+                    epg_text = ""
+
+            # Catchup badge on the right — small ↻ pill on channels that
+            # support Xtream timeshift. Reserves space so text eliding
+            # accounts for it.
+            has_catchup = bool(int(channel.get("xtream_tv_archive", 0) or 0))
+            badge_width = 0
+            if has_catchup:
+                badge_text = "↻"
+                badge_font = QFont(painter.font())
+                badge_font.setBold(True)
+                badge_metrics = QFontMetrics(badge_font)
+                badge_w = badge_metrics.horizontalAdvance(badge_text) + 10
+                badge_h = 18
+                badge_rect = QRect(
+                    self.width() - badge_w - 10,
+                    y_pos + (item_height - badge_h) // 2,
+                    badge_w,
+                    badge_h,
+                )
+                painter.save()
+                badge_bg = QColor(90, 160, 220, 120)
+                painter.setBrush(badge_bg)
+                painter.setPen(QPen(QColor(120, 180, 230, 180), 1))
+                painter.drawRoundedRect(badge_rect, 4, 4)
+                painter.setFont(badge_font)
+                painter.setPen(row_text_color)
+                painter.drawText(
+                    badge_rect,
+                    Qt.AlignmentFlag.AlignCenter,
+                    badge_text,
+                )
+                painter.restore()
+                badge_width = badge_w + 14  # reserve space for text cell
+            text_width -= badge_width
+
+            if epg_text:
+                name_rect = QRect(
+                    text_left, y_pos + 4, text_width, item_height // 2
+                )
+                epg_rect = QRect(
+                    text_left,
+                    y_pos + item_height // 2,
+                    text_width,
+                    item_height // 2 - 4,
+                )
+                painter.setPen(row_text_color)
+                painter.drawText(
+                    name_rect,
+                    Qt.AlignVCenter,
+                    font_metrics.elidedText(
+                        display_text, Qt.ElideRight, name_rect.width()
+                    ),
+                )
+                # Secondary colour for the now/next line.
+                epg_color = QColor(row_text_color)
+                epg_color.setAlpha(150)
+                painter.setPen(epg_color)
+                small_font = painter.font()
+                original_size = small_font.pointSize()
+                if original_size > 0:
+                    small_font.setPointSize(max(7, original_size - 2))
+                painter.setFont(small_font)
+                small_metrics = QFontMetrics(small_font)
+                painter.drawText(
+                    epg_rect,
+                    Qt.AlignVCenter,
+                    small_metrics.elidedText(
+                        epg_text, Qt.ElideRight, epg_rect.width()
+                    ),
+                )
+                # Restore font for subsequent rows.
+                if original_size > 0:
+                    small_font.setPointSize(original_size)
+                    painter.setFont(small_font)
+            else:
+                text_rect = QRect(text_left, y_pos, text_width, item_height)
+                elided_text = font_metrics.elidedText(
+                    display_text, Qt.ElideRight, text_rect.width()
+                )
+                painter.setPen(row_text_color)
+                painter.drawText(text_rect, Qt.AlignVCenter, elided_text)
 
     def mousePressEvent(self, event):
         """Handle mouse clicks."""
@@ -389,11 +527,30 @@ class ChannelViewport(QFrame):
         return self.parent_list.visible_start_index + relative_index
 
     def wheelEvent(self, event):
-        """Handle mouse wheel scrolling."""
-        # Scroll by 3 items per wheel step
-        delta = -event.angleDelta().y() // 120 * 3
+        """Handle mouse wheel and trackpad scrolling.
+
+        Mac trackpads send `pixelDelta` (and usually zero `angleDelta` for
+        small gestures). The previous implementation only read `angleDelta`
+        and truncated with `// 120`, so trackpad scrolls rounded to 0 items
+        and the list felt frozen.
+        """
+        pixel_y = event.pixelDelta().y()
+        angle_y = event.angleDelta().y()
+
+        item_h = self.parent_list.item_height
+        if pixel_y:
+            # Trackpad. Convert pixels to items, but never round a non-zero
+            # gesture down to zero.
+            delta = -pixel_y / item_h
+            delta = int(delta) if abs(delta) >= 1 else (-1 if pixel_y > 0 else 1)
+        elif angle_y:
+            # Traditional wheel: 120 units per notch, 3 items per notch.
+            delta = -angle_y // 120 * 3 or (-1 if angle_y > 0 else 1)
+        else:
+            return
 
         scrollbar = self.parent_list.v_scrollbar
         new_value = scrollbar.value() + delta
         new_value = max(0, min(scrollbar.maximum(), new_value))
         scrollbar.setValue(new_value)
+        event.accept()
